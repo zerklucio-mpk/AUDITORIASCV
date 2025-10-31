@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { FormData, Answers, CompletedAudit, HistorySnapshot } from './types';
+import { FormData, Answers, CompletedAudit, HistorySnapshot, AnswerData } from './types';
+import { getAudits, addAudit, getSnapshots, addSnapshot, deleteAllAudits } from './services/supabaseClient';
 import AuditWelcomeScreen from './components/AuditWelcomeScreen';
 import AuditQuestionsScreen from './components/AuditQuestionsScreen';
 import DashboardScreen from './components/DashboardScreen';
 import SummaryDashboardScreen from './components/SummaryDashboardScreen';
+import SpinnerIcon from './components/icons/SpinnerIcon';
 
 export type Screen = 'summary' | 'welcome' | 'questions' | 'dashboard';
 
@@ -42,9 +44,9 @@ export const AUDIT_AREAS = [
 ];
 
 const calculateCompliance = (answers: Answers): number => {
-    const relevantAnswers = Object.values(answers).filter(a => a.answer === 'Sí' || a.answer === 'No');
+    const relevantAnswers = Object.values(answers).filter((a: AnswerData) => a.answer === 'Sí' || a.answer === 'No');
     if (relevantAnswers.length === 0) return 100;
-    const yesCount = relevantAnswers.filter(a => a.answer === 'Sí').length;
+    const yesCount = relevantAnswers.filter((a: AnswerData) => a.answer === 'Sí').length;
     return (yesCount / relevantAnswers.length) * 100;
 };
 
@@ -61,37 +63,26 @@ const App: React.FC = () => {
   const [historicalSnapshots, setHistoricalSnapshots] = useState<HistorySnapshot[]>([]);
   const [currentAudit, setCurrentAudit] = useState<CompletedAudit | null>(null);
   const [currentAnswers, setCurrentAnswers] = useState<Answers>({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    try {
-      const storedAudits = localStorage.getItem('completedAudits');
-      if (storedAudits) {
-        setCompletedAudits(JSON.parse(storedAudits));
-      }
-      const storedSnapshots = localStorage.getItem('historicalSnapshots');
-      if (storedSnapshots) {
-        setHistoricalSnapshots(JSON.parse(storedSnapshots));
-      }
-    } catch (error) {
-        console.error("Fallo al leer los datos del localStorage", error);
-    }
+    const fetchData = async () => {
+        try {
+            setError(null);
+            setIsLoading(true);
+            const [audits, snapshots] = await Promise.all([getAudits(), getSnapshots()]);
+            setCompletedAudits(audits);
+            setHistoricalSnapshots(snapshots);
+        } catch (error) {
+            console.error("Fallo al leer los datos de Supabase", error);
+            setError("No se pudieron cargar los datos. Por favor, configura la conexión.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    fetchData();
   }, []);
-
-  useEffect(() => {
-    try {
-        localStorage.setItem('completedAudits', JSON.stringify(completedAudits));
-    } catch (error) {
-        console.error("Fallo al guardar las auditorías en el localStorage", error);
-    }
-  }, [completedAudits]);
-
-  useEffect(() => {
-    try {
-        localStorage.setItem('historicalSnapshots', JSON.stringify(historicalSnapshots));
-    } catch (error) {
-        console.error("Fallo al guardar el histórico en el localStorage", error);
-    }
-  }, [historicalSnapshots]);
   
   useEffect(() => {
     if ((currentScreen === 'questions' || currentScreen === 'dashboard') && !currentAudit) {
@@ -111,13 +102,22 @@ const App: React.FC = () => {
     setCurrentScreen('questions');
   };
   
-  const handleQuestionsComplete = (answers: Answers) => {
+  const handleQuestionsComplete = async (answers: Answers) => {
     if (currentAudit) {
       const completedAudit: CompletedAudit = { ...currentAudit, answers };
-      setCompletedAudits(prev => [...prev, completedAudit]);
-      setCurrentAudit(completedAudit);
-      setCurrentAnswers(answers);
-      setCurrentScreen('dashboard');
+      try {
+        setIsLoading(true);
+        await addAudit(completedAudit);
+        setCompletedAudits(prev => [...prev, completedAudit]);
+        setCurrentAudit(completedAudit);
+        setCurrentAnswers(answers);
+        setCurrentScreen('dashboard');
+      } catch (error) {
+          console.error("Error guardando la auditoría en Supabase:", error);
+          setError("Hubo un error al guardar la auditoría. Revisa la configuración de Supabase.");
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
   
@@ -134,7 +134,7 @@ const App: React.FC = () => {
     setCurrentScreen('questions');
   };
 
-  const handleArchiveAndReset = () => {
+  const handleArchiveAndReset = async () => {
     if (completedAudits.length === 0) {
         alert("No hay auditorías para archivar.");
         return;
@@ -146,12 +146,49 @@ const App: React.FC = () => {
         value: averageCompliance,
     };
 
-    setHistoricalSnapshots(prev => [...prev, newSnapshot]);
-    setCompletedAudits([]);
-    alert("Ciclo archivado y reiniciado con éxito. El cumplimiento promedio del ciclo fue guardado en el historial.");
+    try {
+        setIsLoading(true);
+        await addSnapshot(newSnapshot);
+        await deleteAllAudits();
+        
+        setHistoricalSnapshots(prev => [...prev, newSnapshot]);
+        setCompletedAudits([]);
+        alert("Ciclo archivado y reiniciado con éxito. El cumplimiento promedio del ciclo fue guardado en el historial.");
+    } catch (error) {
+        console.error("Error al archivar y reiniciar:", error);
+        setError("Hubo un error al archivar el ciclo. Revisa la configuración de Supabase.");
+    } finally {
+        setIsLoading(false);
+    }
   };
 
-  const renderScreen = () => {
+  const renderContent = () => {
+    if (isLoading) {
+      return (
+        <div className="flex flex-col items-center justify-center gap-4 py-20">
+          <SpinnerIcon className="h-12 w-12 text-indigo-500 animate-spin" />
+          <p className="text-slate-400">Cargando...</p>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="text-center py-10 px-6 bg-red-900/20 border border-red-500/30 rounded-lg max-w-2xl mx-auto">
+          <h3 className="text-xl font-semibold text-red-300">Error de Configuración</h3>
+          <p className="mt-2 text-red-400">{error}</p>
+          <div className="mt-4 text-sm text-left bg-slate-800/50 p-4 rounded-md border border-slate-700">
+            <p className="font-semibold text-slate-300">Acción Requerida:</p>
+            <ol className="list-decimal list-inside mt-2 space-y-1 text-slate-400">
+                <li>Abre el archivo <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">services/supabaseClient.ts</code>.</li>
+                <li>Reemplaza los valores de <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">SUPABASE_URL</code> y <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">SUPABASE_ANON_KEY</code> con tus credenciales.</li>
+                <li>Guarda el archivo. La aplicación se conectará automáticamente.</li>
+            </ol>
+          </div>
+        </div>
+      );
+    }
+    
     switch (currentScreen) {
       case 'summary':
         return <SummaryDashboardScreen 
@@ -169,7 +206,6 @@ const App: React.FC = () => {
       case 'dashboard':
         return currentAudit ? <DashboardScreen audit={currentAudit} questions={AUDIT_QUESTIONS} onReturnToSummary={handleBackToSummary} onBack={handleBackToQuestions} /> : null;
       default:
-        // This case should not be reached with proper state management, but as a safeguard, we return the summary screen.
         return <SummaryDashboardScreen 
           audits={completedAudits} 
           onStartNewAudit={handleStartAuditProcess} 
@@ -189,7 +225,7 @@ const App: React.FC = () => {
         </div>
       </header>
       <main className="container mx-auto px-4 py-8 sm:py-12">
-        {renderScreen()}
+        {renderContent()}
       </main>
     </div>
   );

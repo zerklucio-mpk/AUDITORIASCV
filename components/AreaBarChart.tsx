@@ -24,7 +24,7 @@ const barColors = [
 const AreaBarChart: React.FC<AreaBarChartProps> = ({ data, title, forExport = false }) => {
   if (!data || data.length === 0) {
     return (
-      <div className="flex flex-col">
+      <div className={`flex flex-col ${forExport ? 'p-6 bg-slate-900' : ''}`}>
         <h3 className="text-xl font-semibold mb-4 text-white text-center">{title}</h3>
         <p className="text-slate-400 text-center py-10">No hay datos para mostrar.</p>
       </div>
@@ -40,11 +40,11 @@ const AreaBarChart: React.FC<AreaBarChartProps> = ({ data, title, forExport = fa
   const yAxisLabels = ['100%', '75%', '50%', '25%', '0%'];
 
   return (
-    <div className={`flex flex-col ${forExport ? 'py-4' : ''}`}>
+    <div className={`flex flex-col ${forExport ? 'p-6 bg-slate-900' : ''}`}>
       <h3 className="text-xl font-semibold mb-4 text-white text-center">{title}</h3>
       <div className="flex w-full">
         {/* Y-Axis Labels */}
-        <div className="flex flex-col justify-between text-xs text-slate-400 pr-2 py-1 text-right" style={{ height: '300px' }}>
+        <div className="flex flex-col justify-between text-xs text-slate-400 pr-2 pb-12 text-right" style={{ height: '300px' }}>
             {yAxisLabels.map(label => <span key={label}>{label}</span>)}
         </div>
         {/* Chart + X-Axis Labels wrapper */}
@@ -74,10 +74,10 @@ const AreaBarChart: React.FC<AreaBarChartProps> = ({ data, title, forExport = fa
               </div>
             </div>
             {/* X-Axis Labels */}
-            <div className="flex justify-around items-start h-auto px-4 gap-4 border-l border-transparent">
+            <div className="flex justify-around items-start h-12 px-4 gap-4 border-l border-transparent pt-1">
                 {chartData.map((item, index) => (
                     <div key={index} className="flex-1">
-                        <div className="text-xs text-slate-400 mt-2 text-center break-words w-full">{item.name}</div>
+                        <div className="text-xs text-slate-400 text-center break-words w-full">{item.name}</div>
                     </div>
                 ))}
             </div>

@@ -9,30 +9,30 @@ interface HistoryBarChartProps {
 const HistoryBarChart: React.FC<HistoryBarChartProps> = ({ data, title, forExport = false }) => {
   if (!data || data.length === 0) {
     return (
-      <div className="flex flex-col">
+      <div className={`flex flex-col ${forExport ? 'p-6 bg-slate-900' : ''}`}>
         {title && <h3 className="text-xl font-semibold mb-4 text-white text-center">{title}</h3>}
         <p className="text-slate-400 text-center py-10">No hay datos para mostrar.</p>
       </div>
     );
   }
 
-  const chartData = data.slice(-30); // Show up to last 30 entries for better visibility
+  const chartData = forExport ? data : data.slice(-30); // Show all for export, last 30 for UI
   const yAxisLabels = ['100%', '75%', '50%', '25%', '0%'];
 
-  const labelClasses = forExport 
-    ? "text-xs text-slate-400 text-center whitespace-nowrap"
-    : "text-xs text-slate-400 text-center transform -rotate-45 whitespace-nowrap";
+  const barContainerClasses = `flex items-end h-full px-2 gap-2 relative ${forExport ? '' : 'overflow-x-auto'}`;
+  const labelContainerClasses = `flex h-12 px-2 gap-2 relative border-l border-transparent ${forExport ? '' : 'overflow-x-auto'}`;
+  const labelClasses = `text-xs text-slate-400 text-center whitespace-nowrap ${forExport ? '' : 'transform -rotate-45'}`;
 
   return (
-    <div className="flex flex-col">
+    <div className={`flex flex-col ${forExport ? 'p-6 bg-slate-900' : ''}`}>
       {title && <h3 className="text-xl font-semibold mb-4 text-white text-center">{title}</h3>}
       <div className="flex w-full">
         {/* Y-Axis Labels */}
-        <div className="flex flex-col justify-between text-xs text-slate-400 pr-2 py-1 text-right" style={{ height: '300px' }}>
+        <div className="flex flex-col justify-between text-xs text-slate-400 pr-2 py-1 pb-12 text-right" style={{ height: '300px' }}>
           {yAxisLabels.map(label => <span key={label}>{label}</span>)}
         </div>
         {/* Chart + X-Axis Labels wrapper */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className={`flex-1 flex flex-col ${forExport ? '' : 'overflow-hidden'}`}>
           {/* Chart Area */}
           <div className="flex-1 border-l border-b border-slate-700 relative" style={{ height: '300px' }}>
             {/* Grid Lines */}
@@ -42,7 +42,7 @@ const HistoryBarChart: React.FC<HistoryBarChartProps> = ({ data, title, forExpor
               ))}
             </div>
             {/* Bars */}
-            <div className="flex items-end h-full px-2 gap-2 overflow-x-auto relative">
+            <div className={barContainerClasses}>
               {chartData.map((item, index) => (
                 <div key={index} className="flex-1 flex flex-col items-center justify-end h-full" style={{ minWidth: '40px' }}>
                   <div className="text-xs font-semibold text-white mb-1">{item.value.toFixed(0)}%</div>
@@ -56,7 +56,7 @@ const HistoryBarChart: React.FC<HistoryBarChartProps> = ({ data, title, forExpor
             </div>
           </div>
           {/* X-Axis Labels Container */}
-          <div className="flex h-12 px-2 gap-2 overflow-x-auto relative border-l border-transparent">
+          <div className={labelContainerClasses}>
             {chartData.map((item, index) => (
               <div key={index} className="flex-1 flex justify-center pt-1" style={{ minWidth: '40px' }}>
                 <div className={labelClasses}>{item.name}</div>

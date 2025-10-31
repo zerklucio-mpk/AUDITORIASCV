@@ -1,4 +1,7 @@
 {
-  "name": "Formulario de Auditoría",
-  "description": "Un formulario de auditoría profesional para el registro de datos."
+  "name": "Copy of AUDITORIA SUPABASE 2.0",
+  "description": "Un formulario de auditoría profesional para el registro de datos.",
+  "requestFramePermissions": [
+    "camera"
+  ]
 }

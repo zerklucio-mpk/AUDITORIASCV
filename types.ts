@@ -5,6 +5,7 @@ export type Answer = 'Sí' | 'No' | 'N/A' | null;
 export interface AnswerData {
   answer: Answer;
   observation?: string;
+  photo?: string;
 }
 
 export interface Answers {

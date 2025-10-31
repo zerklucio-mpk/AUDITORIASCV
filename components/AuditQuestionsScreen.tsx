@@ -3,6 +3,9 @@ import React, { useState } from 'react';
 import { Answers, Answer } from '../types';
 import ArrowLeftIcon from './icons/ArrowLeftIcon';
 import CheckCircleIcon from './icons/CheckCircleIcon';
+import CameraIcon from './icons/CameraIcon';
+import XCircleIcon from './icons/XCircleIcon';
+
 
 interface Props {
   questions: string[];
@@ -15,10 +18,17 @@ const AuditQuestionsScreen: React.FC<Props> = ({ questions, initialAnswers, onFi
   const [answers, setAnswers] = useState<Answers>(initialAnswers);
 
   const handleAnswerChange = (questionIndex: number, answer: Answer) => {
-    setAnswers(prev => ({
-      ...prev,
-      [questionIndex]: { ...prev[questionIndex], answer },
-    }));
+    setAnswers(prev => {
+      const newAnswerData = { ...prev[questionIndex], answer };
+      // Si la respuesta ya no es 'No', eliminamos la foto para mantener la consistencia.
+      if (answer !== 'No') {
+        delete newAnswerData.photo;
+      }
+      return {
+        ...prev,
+        [questionIndex]: newAnswerData,
+      };
+    });
   };
   
   const handleObservationChange = (questionIndex: number, observation: string) => {
@@ -26,6 +36,33 @@ const AuditQuestionsScreen: React.FC<Props> = ({ questions, initialAnswers, onFi
         ...prev,
         [questionIndex]: { answer: prev[questionIndex]?.answer || null, observation },
     }));
+  };
+
+  const handlePhotoChange = (questionIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+          setAnswers(prev => ({
+              ...prev,
+              [questionIndex]: { ...prev[questionIndex], answer: 'No', photo: reader.result as string },
+          }));
+      };
+      reader.readAsDataURL(file);
+      // Reset file input value to allow taking a new picture if the user cancels and tries again
+      e.target.value = '';
+  };
+
+  const handleRemovePhoto = (questionIndex: number) => {
+      setAnswers(prev => {
+          const updatedAnswer = { ...prev[questionIndex] };
+          delete updatedAnswer.photo;
+          return {
+              ...prev,
+              [questionIndex]: updatedAnswer
+          };
+      });
   };
 
   const isComplete = () => {
@@ -54,7 +91,7 @@ const AuditQuestionsScreen: React.FC<Props> = ({ questions, initialAnswers, onFi
         {questions.map((question, index) => (
           <div key={index} className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
             <p className="font-medium text-slate-200 mb-4">{`${index + 1}. ${question}`}</p>
-            <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex flex-col sm:flex-row gap-4 items-start">
                 <div className="flex gap-2 flex-shrink-0">
                     {(['Sí', 'No', 'N/A'] as Answer[]).map(option => (
                         <button
@@ -77,7 +114,34 @@ const AuditQuestionsScreen: React.FC<Props> = ({ questions, initialAnswers, onFi
                     className="block w-full rounded-md border-0 py-2 px-3 bg-slate-800 text-white shadow-sm ring-1 ring-inset ring-slate-700 placeholder:text-slate-500 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm sm:leading-6 transition-colors duration-200 flex-1"
                     rows={1}
                 ></textarea>
+                <label className={`flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 w-full sm:w-auto ${
+                    answers[index]?.answer === 'No'
+                    ? 'bg-blue-600 text-white hover:bg-blue-500 cursor-pointer'
+                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                }`}>
+                    <CameraIcon className="h-5 w-5" />
+                    <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={(e) => handlePhotoChange(index, e)}
+                        disabled={answers[index]?.answer !== 'No'}
+                    />
+                </label>
             </div>
+            {answers[index]?.photo && (
+              <div className="mt-4 relative w-32 h-32">
+                  <img src={answers[index]?.photo as string} alt="Previsualización" className="rounded-md object-cover w-full h-full" />
+                  <button
+                      onClick={() => handleRemovePhoto(index)}
+                      className="absolute -top-2 -right-2 bg-slate-800 rounded-full text-red-500 hover:text-red-400"
+                      title="Eliminar foto"
+                  >
+                      <XCircleIcon className="h-6 w-6" />
+                  </button>
+              </div>
+            )}
           </div>
         ))}
       </div>

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { toPng } from 'html-to-image';
 import ReactMarkdown from 'react-markdown';
-import { CompletedAudit, HistorySnapshot, StatsByArea } from '../types';
+import { CompletedAudit, HistorySnapshot, StatsByArea, Answers, AnswerData } from '../types';
 import { generateAuditSummary } from '../services/geminiService';
 import { generatePdfReport, generateXlsxReport, generateDocxReport } from '../services/reportService';
 import SummaryCard from './SummaryCard';
@@ -27,10 +27,10 @@ interface Props {
 type SummaryScreenView = 'main' | 'questions' | 'history';
 type ReportType = 'pdf' | 'xlsx' | 'docx';
 
-const calculateCompliance = (answers: { [key: number]: any }): number => {
-    const relevantAnswers = Object.values(answers).filter(a => a.answer === 'Sí' || a.answer === 'No');
+const calculateCompliance = (answers: Answers): number => {
+    const relevantAnswers = Object.values(answers).filter((a: AnswerData) => a.answer === 'Sí' || a.answer === 'No');
     if (relevantAnswers.length === 0) return 100;
-    const yesCount = relevantAnswers.filter(a => a.answer === 'Sí').length;
+    const yesCount = relevantAnswers.filter((a: AnswerData) => a.answer === 'Sí').length;
     return (yesCount / relevantAnswers.length) * 100;
 };
 
@@ -96,7 +96,8 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
             if (!areaData[area]) {
                 areaData[area] = { 'Sí': 0, 'No': 0, 'N/A': 0 };
             }
-            Object.values(audit.answers).forEach(answerData => {
+            // FIX: Explicitly type `answerData` to resolve type inference issue.
+            Object.values(audit.answers).forEach((answerData: AnswerData) => {
                 if (answerData.answer) {
                     areaData[area][answerData.answer]++;
                 }
@@ -121,7 +122,7 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
           requestAnimationFrame(() => {
             requestAnimationFrame(async () => {
               try {
-                const imageOptions = { cacheBust: true, pixelRatio: 3, backgroundColor: '#0f172a', style: { padding: '20px' } };
+                const imageOptions = { cacheBust: true, pixelRatio: 3, backgroundColor: '#0f172a' };
                 
                 const areaChartImg = await toPng(areaChartRef.current!, imageOptions);
                 const historyChartImg = await toPng(historyChartRef.current!, imageOptions);
@@ -290,7 +291,7 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
         <>
             {renderMainDashboard()}
             {isReportGenerating && (
-                <div style={{ position: 'absolute', left: '-9999px', top: '-9999px', zIndex: -1 }}>
+                <div style={{ position: 'absolute', left: '-9999px', width: '1100px', top: 0, zIndex: -1 }}>
                     <div ref={areaChartRef}>
                         <AreaBarChart data={statsByArea} title="Cumplimiento por Área" forExport={true} />
                     </div>

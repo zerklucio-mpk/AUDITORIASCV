@@ -37,9 +37,7 @@ const HistoryScreen: React.FC<Props> = ({ audits, onBack }) => {
                     </thead>
                     <tbody>
                         {[...audits].reverse().map((audit, index) => {
-                             // FIX: Explicitly type 'a' as AnswerData to resolve TypeScript error.
                              const total = Object.values(audit.answers).filter((a: AnswerData) => a.answer === 'Sí' || a.answer === 'No').length;
-                             // FIX: Explicitly type 'a' as AnswerData to resolve TypeScript error.
                              const yes = Object.values(audit.answers).filter((a: AnswerData) => a.answer === 'Sí').length;
                              const compliance = total > 0 ? (yes / total * 100) : 0;
                              return (
