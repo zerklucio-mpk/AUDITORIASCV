@@ -1,13 +1,14 @@
 import React from 'react';
-import { CompletedAudit, AnswerData } from '../types';
+import { AnswerData } from '../types';
+import { useAppContext } from '../context/AppContext';
 import ArrowLeftIcon from './icons/ArrowLeftIcon';
 
 interface Props {
-  audits: CompletedAudit[];
   onBack: () => void;
 }
 
-const HistoryScreen: React.FC<Props> = ({ audits, onBack }) => {
+const HistoryScreen: React.FC<Props> = ({ onBack }) => {
+  const { audits } = useAppContext();
     
   return (
     <div className="mx-auto w-full max-w-5xl">
@@ -41,7 +42,7 @@ const HistoryScreen: React.FC<Props> = ({ audits, onBack }) => {
                              const yes = Object.values(audit.answers).filter((a: AnswerData) => a.answer === 'Sí').length;
                              const compliance = total > 0 ? (yes / total * 100) : 0;
                              return (
-                                <tr key={index} className="bg-slate-900 border-b border-slate-800 hover:bg-slate-800/50">
+                                <tr key={audit.id} className="bg-slate-900 border-b border-slate-800 hover:bg-slate-800/50">
                                     <td className="px-6 py-4">{audit.auditData.fecha}</td>
                                     <td className="px-6 py-4">{audit.auditData.area}</td>
                                     <td className="px-6 py-4">{audit.auditData.nombreAuditor}</td>

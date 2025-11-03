@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { FormData, Answers, CompletedAudit, HistorySnapshot, AnswerData } from './types';
-import { getAudits, addAudit, getSnapshots, addSnapshot, deleteAllAudits } from './services/supabaseClient';
+import React, { useState, useEffect, useCallback } from 'react';
+import { FormData, Answers, CompletedAudit, HistorySnapshot, Question, Area } from './types';
+import { getAudits, addAudit, getSnapshots, addSnapshot, deleteAllAudits, getQuestions, getAreas } from './services/supabaseClient';
+import { calculateAverageCompliance } from './services/utils';
+import { AppProvider } from './context/AppContext';
 import AuditWelcomeScreen from './components/AuditWelcomeScreen';
 import AuditQuestionsScreen from './components/AuditQuestionsScreen';
 import DashboardScreen from './components/DashboardScreen';
@@ -9,80 +11,42 @@ import SpinnerIcon from './components/icons/SpinnerIcon';
 
 export type Screen = 'summary' | 'welcome' | 'questions' | 'dashboard';
 
-export const AUDIT_QUESTIONS = [
-    "¿Todas las posiciones de almacenamiento se encuentran identificadas con localizadores?",
-    "¿Todos los espacios entre tarimas se encuentran libres de objetos y/o desperdicios?",
-    "¿Todas las posiciones de almacenamiento libres, se encuentran sin ningún tipo de objeto y/o desperdicio dentro de los mismos?",
-    "¿Se encuentra señalizada y especificada la estiba máxima?",
-    "¿El pasillo peatonal se encuentra libre de obstáculos?",
-    "¿Todas las tarimas que tienen producto se encuentran identificadas con su bitácora de ubicación?",
-    "¿Se respetan las zonas de trabajo delimitadas?",
-    "¿Los extintores se encuentran libres de obstáculos?",
-    "¿Las puertas de emergencia se encuentran libres de obstáculos?",
-    "¿Los señalamientos de seguridad son visibles y legibles?",
-    "¿Los patines cuentan con formato de inspección?",
-    "¿Todas las lamparas funcionan correctamente?",
-    "¿Los apagadores y conexiones se encuentran en optimas condicionas y con tapa?",
-    "¿El botiquín de primeros auxilios se encuentra completo y al día?",
-    "¿Las zonas designadas de desperdicio se encuentran sin exceso de los mismos?",
-    "¿La zona cuenta con presencia de animales domésticos?",
-    "¿La zona se encuentra sin presencia de plagas?",
-    "¿Los colaboradores portan su equipo de protección personal al momento de realizar sus actividades?",
-    "¿Los elementos químicos poseen sus hojas de seguridad?",
-    "¿El montacargas cuenta con un lugar designado?",
-    "¿El montacargas cuenta con su checklist?",
-    "¿Los patines cuentan con un espacio designado?",
-    "¿Las tarimas visibles, se encuentran en optimas condiciones?",
-    "¿Las rampas, barandales y racks se encuentran en buen estado?",
-    "¿Los suelos se encuentran limpios sin presencia de derrames o materiales innecesarios?"
-];
-
-export const AUDIT_AREAS = [
-    "Reacondicionado", "Devoluciones", "Empaque TV", "Empaque Retail", 
-    "Planta Alta", "Alto Valor", "Mensajería y Distribución", 
-    "Almacén F", "Maquila", "Recibo"
-];
-
-const calculateCompliance = (answers: Answers): number => {
-    const relevantAnswers = Object.values(answers).filter((a: AnswerData) => a.answer === 'Sí' || a.answer === 'No');
-    if (relevantAnswers.length === 0) return 100;
-    const yesCount = relevantAnswers.filter((a: AnswerData) => a.answer === 'Sí').length;
-    return (yesCount / relevantAnswers.length) * 100;
-};
-
-const calculateAverageCompliance = (audits: CompletedAudit[]): number => {
-    if (audits.length === 0) return 0;
-    const totalCompliance = audits.reduce((sum, audit) => sum + calculateCompliance(audit.answers), 0);
-    return totalCompliance / audits.length;
-};
-
-
 const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<Screen>('summary');
   const [completedAudits, setCompletedAudits] = useState<CompletedAudit[]>([]);
   const [historicalSnapshots, setHistoricalSnapshots] = useState<HistorySnapshot[]>([]);
-  const [currentAudit, setCurrentAudit] = useState<CompletedAudit | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
+  const [currentAudit, setCurrentAudit] = useState<Omit<CompletedAudit, 'id'> | null>(null);
   const [currentAnswers, setCurrentAnswers] = useState<Answers>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-        try {
-            setError(null);
-            setIsLoading(true);
-            const [audits, snapshots] = await Promise.all([getAudits(), getSnapshots()]);
-            setCompletedAudits(audits);
-            setHistoricalSnapshots(snapshots);
-        } catch (error) {
-            console.error("Fallo al leer los datos de Supabase", error);
-            setError("No se pudieron cargar los datos. Por favor, configura la conexión.");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-    fetchData();
+  const fetchData = useCallback(async () => {
+    try {
+        setError(null);
+        setIsLoading(true);
+        const [audits, snapshots, fetchedQuestions, fetchedAreas] = await Promise.all([
+          getAudits(), 
+          getSnapshots(),
+          getQuestions(),
+          getAreas(),
+        ]);
+        setCompletedAudits(audits);
+        setHistoricalSnapshots(snapshots);
+        setQuestions(fetchedQuestions);
+        setAreas(fetchedAreas);
+    } catch (error) {
+        console.error("Fallo al leer los datos de Supabase", error);
+        setError("No se pudieron cargar los datos. Por favor, configura la conexión y las tablas de la base de datos.");
+    } finally {
+        setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
   
   useEffect(() => {
     if ((currentScreen === 'questions' || currentScreen === 'dashboard') && !currentAudit) {
@@ -104,11 +68,11 @@ const App: React.FC = () => {
   
   const handleQuestionsComplete = async (answers: Answers) => {
     if (currentAudit) {
-      const completedAudit: CompletedAudit = { ...currentAudit, answers };
+      const completedAudit: Omit<CompletedAudit, 'id'> = { ...currentAudit, answers };
       try {
         setIsLoading(true);
         await addAudit(completedAudit);
-        setCompletedAudits(prev => [...prev, completedAudit]);
+        await fetchData();
         setCurrentAudit(completedAudit);
         setCurrentAnswers(answers);
         setCurrentScreen('dashboard');
@@ -151,8 +115,7 @@ const App: React.FC = () => {
         await addSnapshot(newSnapshot);
         await deleteAllAudits();
         
-        setHistoricalSnapshots(prev => [...prev, newSnapshot]);
-        setCompletedAudits([]);
+        await fetchData(); // Recargar todo para reflejar el estado vacío
         alert("Ciclo archivado y reiniciado con éxito. El cumplimiento promedio del ciclo fue guardado en el historial.");
     } catch (error) {
         console.error("Error al archivar y reiniciar:", error);
@@ -161,13 +124,21 @@ const App: React.FC = () => {
         setIsLoading(false);
     }
   };
+  
+  const appContextValue = {
+    audits: completedAudits,
+    snapshots: historicalSnapshots,
+    questions,
+    areas,
+    refreshData: fetchData,
+  };
 
   const renderContent = () => {
-    if (isLoading) {
+    if (isLoading && !error) {
       return (
         <div className="flex flex-col items-center justify-center gap-4 py-20">
           <SpinnerIcon className="h-12 w-12 text-indigo-500 animate-spin" />
-          <p className="text-slate-400">Cargando...</p>
+          <p className="text-slate-400">Cargando datos...</p>
         </div>
       );
     }
@@ -175,14 +146,15 @@ const App: React.FC = () => {
     if (error) {
       return (
         <div className="text-center py-10 px-6 bg-red-900/20 border border-red-500/30 rounded-lg max-w-2xl mx-auto">
-          <h3 className="text-xl font-semibold text-red-300">Error de Configuración</h3>
+          <h3 className="text-xl font-semibold text-red-300">Error de Configuración o Conexión</h3>
           <p className="mt-2 text-red-400">{error}</p>
           <div className="mt-4 text-sm text-left bg-slate-800/50 p-4 rounded-md border border-slate-700">
-            <p className="font-semibold text-slate-300">Acción Requerida:</p>
+            <p className="font-semibold text-slate-300">Acciones Recomendadas:</p>
             <ol className="list-decimal list-inside mt-2 space-y-1 text-slate-400">
-                <li>Abre el archivo <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">services/supabaseClient.ts</code>.</li>
-                <li>Reemplaza los valores de <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">SUPABASE_URL</code> y <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">SUPABASE_ANON_KEY</code> con tus credenciales.</li>
-                <li>Guarda el archivo. La aplicación se conectará automáticamente.</li>
+                <li>Verifica tu conexión a internet.</li>
+                <li>Abre <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">services/supabaseClient.ts</code> y asegúrate de que tus credenciales son correctas.</li>
+                <li>Asegúrate de haber creado las tablas <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">audits</code>, <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">snapshots</code>, <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">questions</code>, y <code className="bg-slate-900 text-amber-400 px-1 py-0.5 rounded text-xs">areas</code> en Supabase.</li>
+                <li>Revisa las políticas de seguridad (RLS) en tu dashboard de Supabase para asegurarte de que permitan el acceso público.</li>
             </ol>
           </div>
         </div>
@@ -192,26 +164,19 @@ const App: React.FC = () => {
     switch (currentScreen) {
       case 'summary':
         return <SummaryDashboardScreen 
-          audits={completedAudits} 
           onStartNewAudit={handleStartAuditProcess} 
-          questions={AUDIT_QUESTIONS} 
-          auditableAreas={AUDIT_AREAS} 
-          historicalSnapshots={historicalSnapshots}
           onArchiveAndReset={handleArchiveAndReset}
         />;
       case 'welcome':
-        return <AuditWelcomeScreen onFormSubmit={handleFormSubmit} onBack={handleBackToSummary} initialData={currentAudit?.auditData} areaOptions={AUDIT_AREAS} />;
+        return <AuditWelcomeScreen onFormSubmit={handleFormSubmit} onBack={handleBackToSummary} initialData={currentAudit?.auditData} />;
       case 'questions':
-        return currentAudit ? <AuditQuestionsScreen questions={AUDIT_QUESTIONS} initialAnswers={currentAnswers} onFinish={handleQuestionsComplete} onBack={handleBackToWelcome} /> : null;
+        return currentAudit ? <AuditQuestionsScreen initialAnswers={currentAnswers} onFinish={handleQuestionsComplete} onBack={handleBackToWelcome} /> : null;
       case 'dashboard':
-        return currentAudit ? <DashboardScreen audit={currentAudit} questions={AUDIT_QUESTIONS} onReturnToSummary={handleBackToSummary} onBack={handleBackToQuestions} /> : null;
+        const lastAudit = completedAudits[completedAudits.length - 1];
+        return lastAudit ? <DashboardScreen audit={lastAudit} onReturnToSummary={handleBackToSummary} onBack={handleBackToQuestions} /> : null;
       default:
         return <SummaryDashboardScreen 
-          audits={completedAudits} 
           onStartNewAudit={handleStartAuditProcess} 
-          questions={AUDIT_QUESTIONS} 
-          auditableAreas={AUDIT_AREAS} 
-          historicalSnapshots={historicalSnapshots}
           onArchiveAndReset={handleArchiveAndReset}
         />;
     }
@@ -225,7 +190,9 @@ const App: React.FC = () => {
         </div>
       </header>
       <main className="container mx-auto px-4 py-8 sm:py-12">
-        {renderContent()}
+        <AppProvider value={appContextValue}>
+          {renderContent()}
+        </AppProvider>
       </main>
     </div>
   );

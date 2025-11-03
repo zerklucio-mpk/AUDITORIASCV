@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-// FIX: Corrected import path for types.
-import { FormData, FormErrors } from '../types';
+import { FormData, FormErrors, Area } from '../types';
+import { useAppContext } from '../context/AppContext';
 import FormField from './FormField';
 import CalendarIcon from './icons/CalendarIcon';
 import ChevronDownIcon from './icons/ChevronDownIcon';
@@ -10,10 +10,10 @@ interface Props {
     onFormSubmit: (data: FormData) => void;
     onBack: () => void;
     initialData?: FormData | null;
-    areaOptions: string[];
 }
 
-const AuditWelcomeScreen: React.FC<Props> = ({ onFormSubmit, onBack, initialData, areaOptions }) => {
+const AuditWelcomeScreen: React.FC<Props> = ({ onFormSubmit, onBack, initialData }) => {
+  const { areas } = useAppContext();
   const [formData, setFormData] = useState<FormData>({
     nombreAuditor: '',
     area: '',
@@ -92,8 +92,8 @@ const AuditWelcomeScreen: React.FC<Props> = ({ onFormSubmit, onBack, initialData
                   } focus:ring-2 focus:ring-inset sm:text-sm sm:leading-6 transition-colors duration-200`}
                 >
                   <option value="" disabled>Selecciona un área</option>
-                  {areaOptions.map(option => (
-                    <option key={option} value={option}>{option}</option>
+                  {areas.map(area => (
+                    <option key={area.id} value={area.name}>{area.name}</option>
                   ))}
                 </select>
                 <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">

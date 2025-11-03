@@ -167,11 +167,16 @@ export const generatePdfReport = async (
         for (const row of rowsWithPhotos) {
              if (finalY > 230) { doc.addPage(); finalY = 20; }
              doc.setFontSize(10);
-             doc.text(`- Pregunta #${row.qNum}:`, 15, finalY);
+             doc.text(`- Pregunta #${row.qNum}: ${row.pregunta}`, 15, finalY, { maxWidth: maxWidth });
+             finalY += 5;
              try {
-                doc.addImage(row.photo, 'JPEG', 20, finalY + 2, 60, 45, undefined, 'FAST');
-             } catch(e) { console.error(e) }
-             finalY += 55;
+                const photoDims = await getImageDimensions(row.photo!);
+                const photoWidth = 80; // A larger width for better clarity
+                const photoHeight = photoWidth * (photoDims.height / photoDims.width);
+                if (finalY + photoHeight > 280) { doc.addPage(); finalY = 20; }
+                doc.addImage(row.photo!, 'JPEG', 20, finalY + 2, photoWidth, photoHeight, undefined, 'NONE');
+                finalY += photoHeight + 8;
+             } catch(e) { console.error("Error adding image to PDF:", e) }
         }
     }
   }
@@ -248,6 +253,29 @@ export const generateXlsxReport = async (
   const { allRowsForReporting } = prepareReportData(audits, questions);
   allRowsForReporting.forEach(row => { dataSheet.addRow({ ...row, photo: row.photo ? 'Sí' : 'No' }); });
 
+  const photoSheet = workbook.addWorksheet('Evidencia Fotográfica');
+  photoSheet.columns = [
+    { header: 'Área', key: 'area', width: 25 },
+    { header: 'N° Pregunta', key: 'qNum', width: 15 },
+    { header: 'Pregunta', key: 'pregunta', width: 70 },
+  ];
+  let photoSheetRow = 2;
+  const photos = allRowsForReporting.filter(row => row.photo);
+  for (const row of photos) {
+    photoSheet.addRow({ area: row.area, qNum: row.qNum, pregunta: row.pregunta });
+    const photoDims = await getImageDimensions(row.photo!);
+    const photoWidth = 250;
+    const photoHeight = photoWidth * (photoDims.height / photoDims.width);
+    const imageId = workbook.addImage({ base64: row.photo!, extension: 'png' });
+    photoSheet.addImage(imageId, {
+        tl: { col: 3, row: photoSheetRow - 1 },
+        ext: { width: photoWidth, height: photoHeight }
+    });
+    photoSheet.getRow(photoSheetRow).height = photoHeight * 0.75; // Set row height (points)
+    photoSheetRow++;
+  }
+
+
   const questionSheet = workbook.addWorksheet('Análisis por Pregunta');
   let currentRow = 1;
   const xlsxQuestionChartWidth = 800;
@@ -279,7 +307,7 @@ export const generateDocxReport = async (
   historyChartImg: string,
   questionChartImages: string[],
 ) => {
-    const docxMaxWidth = 650;
+    const docxMaxWidth = 600;
 
     const areaChartDims = await getImageDimensions(areaChartImg);
     const areaChartHeight = docxMaxWidth * (areaChartDims.height / areaChartDims.width);
@@ -310,7 +338,7 @@ export const generateDocxReport = async (
         docChildren.push(new Paragraph({ text: `Área: ${area}`, heading: "Heading2" }));
         const tableRows = [
             new TableRow({
-                children: ['#', 'Pregunta', 'Respuesta', 'Observación', 'Foto'].map(header => new TableCell({ children: [new Paragraph({ text: header, bold: true })], shading: { fill: "DDDDDD" } })),
+                children: ['#', 'Pregunta', 'Respuesta', 'Observación'].map(header => new TableCell({ children: [new Paragraph({ text: header, bold: true })], shading: { fill: "DDDDDD" } })),
                 tableHeader: true,
             })
         ];
@@ -321,13 +349,15 @@ export const generateDocxReport = async (
                     new TableCell({ children: [new Paragraph(row.pregunta)] }),
                     new TableCell({ children: [new Paragraph(row.respuesta || '')] }),
                     new TableCell({ children: [new Paragraph(row.observacion || '')] }),
-                    new TableCell({ children: [new Paragraph(row.photo ? 'Sí' : 'No')] }),
                 ]
             }));
             if (row.photo) {
+                 const photoDims = await getImageDimensions(row.photo);
+                 const photoWidth = 200;
+                 const photoHeight = photoWidth * (photoDims.height / photoDims.width);
                 tableRows.push(new TableRow({
-                    children: [ new TableCell({ columnSpan: 5, children: [
-                        new Paragraph({ children: [ new ImageRun({ data: base64ToUint8Array(row.photo), transformation: { width: 200, height: 150 } }) ], alignment: AlignmentType.CENTER })
+                    children: [ new TableCell({ columnSpan: 4, children: [
+                        new Paragraph({ children: [ new ImageRun({ data: base64ToUint8Array(row.photo), transformation: { width: photoWidth, height: photoHeight } }) ], alignment: AlignmentType.CENTER })
                     ]})]
                 }));
             }

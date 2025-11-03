@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-// FIX: Corrected import path for types.
+import React, { useState, useMemo } from 'react';
 import { Answers, Answer } from '../types';
+import { useAppContext } from '../context/AppContext';
 import ArrowLeftIcon from './icons/ArrowLeftIcon';
 import CheckCircleIcon from './icons/CheckCircleIcon';
 import CameraIcon from './icons/CameraIcon';
@@ -8,19 +8,20 @@ import XCircleIcon from './icons/XCircleIcon';
 
 
 interface Props {
-  questions: string[];
   initialAnswers: Answers;
   onFinish: (answers: Answers) => void;
   onBack: () => void;
 }
 
-const AuditQuestionsScreen: React.FC<Props> = ({ questions, initialAnswers, onFinish, onBack }) => {
+const AuditQuestionsScreen: React.FC<Props> = ({ initialAnswers, onFinish, onBack }) => {
+  const { questions } = useAppContext();
   const [answers, setAnswers] = useState<Answers>(initialAnswers);
+  
+  const questionTexts = useMemo(() => questions.map(q => q.text), [questions]);
 
   const handleAnswerChange = (questionIndex: number, answer: Answer) => {
     setAnswers(prev => {
       const newAnswerData = { ...prev[questionIndex], answer };
-      // Si la respuesta ya no es 'No', eliminamos la foto para mantener la consistencia.
       if (answer !== 'No') {
         delete newAnswerData.photo;
       }
@@ -50,7 +51,6 @@ const AuditQuestionsScreen: React.FC<Props> = ({ questions, initialAnswers, onFi
           }));
       };
       reader.readAsDataURL(file);
-      // Reset file input value to allow taking a new picture if the user cancels and tries again
       e.target.value = '';
   };
 
@@ -66,7 +66,7 @@ const AuditQuestionsScreen: React.FC<Props> = ({ questions, initialAnswers, onFi
   };
 
   const isComplete = () => {
-    return questions.every((_, index) => answers[index] && answers[index].answer !== null);
+    return questionTexts.every((_, index) => answers[index] && answers[index].answer !== null);
   };
 
   const handleSubmit = () => {
@@ -88,7 +88,7 @@ const AuditQuestionsScreen: React.FC<Props> = ({ questions, initialAnswers, onFi
       </div>
       
       <div className="space-y-6">
-        {questions.map((question, index) => (
+        {questionTexts.map((question, index) => (
           <div key={index} className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
             <p className="font-medium text-slate-200 mb-4">{`${index + 1}. ${question}`}</p>
             <div className="flex flex-col sm:flex-row gap-4 items-start">

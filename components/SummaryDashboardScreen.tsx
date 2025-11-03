@@ -4,39 +4,36 @@ import ReactMarkdown from 'react-markdown';
 import { CompletedAudit, HistorySnapshot, StatsByArea, Answers, AnswerData } from '../types';
 import { generateAuditSummary } from '../services/geminiService';
 import { generatePdfReport, generateXlsxReport, generateDocxReport } from '../services/reportService';
+import { deleteAuditsByIds } from '../services/supabaseClient';
+import { calculateCompliance } from '../services/utils';
+import { useAppContext } from '../context/AppContext';
 import SummaryCard from './SummaryCard';
 import AreaBarChart from './AreaBarChart';
 import HistoryBarChart from './HistoryBarChart';
 import QuestionAnalysisScreen from './QuestionAnalysisScreen';
 import HistoryScreen from './HistoryScreen';
 import Dropdown from './Dropdown';
+import ManageAuditsModal from './ManageAuditsModal';
 import AiSparkleIcon from './icons/AiSparkleIcon';
 import SpinnerIcon from './icons/SpinnerIcon';
 import ChevronDownIcon from './icons/ChevronDownIcon';
+import TrashIcon from './icons/TrashIcon';
 
 
 interface Props {
-  audits: CompletedAudit[];
   onStartNewAudit: () => void;
-  questions: string[];
-  auditableAreas: string[];
-  historicalSnapshots: HistorySnapshot[];
   onArchiveAndReset: () => void;
 }
 
 type SummaryScreenView = 'main' | 'questions' | 'history';
 type ReportType = 'pdf' | 'xlsx' | 'docx';
 
-const calculateCompliance = (answers: Answers): number => {
-    const relevantAnswers = Object.values(answers).filter((a: AnswerData) => a.answer === 'Sí' || a.answer === 'No');
-    if (relevantAnswers.length === 0) return 100;
-    const yesCount = relevantAnswers.filter((a: AnswerData) => a.answer === 'Sí').length;
-    return (yesCount / relevantAnswers.length) * 100;
-};
-
-const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, questions, auditableAreas, historicalSnapshots, onArchiveAndReset }) => {
+const SummaryDashboardScreen: React.FC<Props> = ({ onStartNewAudit, onArchiveAndReset }) => {
+    const { audits, snapshots: historicalSnapshots, questions, areas, refreshData } = useAppContext();
+    
     const [currentView, setCurrentView] = useState<SummaryScreenView>('main');
     const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+    const [isManageModalOpen, setIsManageModalOpen] = useState(false);
     const [selectedAuditForSummary, setSelectedAuditForSummary] = useState<CompletedAudit | null>(null);
     const [summaryContent, setSummaryContent] = useState('');
     const [isSummaryLoading, setIsSummaryLoading] = useState(false);
@@ -46,9 +43,11 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
     const areaChartRef = useRef<HTMLDivElement>(null);
     const historyChartRef = useRef<HTMLDivElement>(null);
     const questionChartRefs = useRef<(HTMLDivElement | null)[]>([]);
+    
+    const questionTexts = useMemo(() => questions.map(q => q.text), [questions]);
 
     const auditedAreasCount = useMemo(() => new Set(audits.map(a => a.auditData.area)).size, [audits]);
-    const totalAreasCount = auditableAreas.length;
+    const totalAreasCount = areas.length;
     const isCycleComplete = auditedAreasCount >= totalAreasCount;
 
     const stats = useMemo(() => {
@@ -96,7 +95,6 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
             if (!areaData[area]) {
                 areaData[area] = { 'Sí': 0, 'No': 0, 'N/A': 0 };
             }
-            // FIX: Explicitly type `answerData` to resolve type inference issue.
             Object.values(audit.answers).forEach((answerData: AnswerData) => {
                 if (answerData.answer) {
                     areaData[area][answerData.answer]++;
@@ -138,13 +136,13 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
     
                 switch (reportRequest) {
                   case 'pdf':
-                    await generatePdfReport(audits, reportStats, questions, areaChartImg, historyChartImg, questionChartImages);
+                    await generatePdfReport(audits, reportStats, questionTexts, areaChartImg, historyChartImg, questionChartImages);
                     break;
                   case 'xlsx':
-                    await generateXlsxReport(audits, reportStats, questions, areaChartImg, historyChartImg, questionChartImages);
+                    await generateXlsxReport(audits, reportStats, questionTexts, areaChartImg, historyChartImg, questionChartImages);
                     break;
                   case 'docx':
-                    await generateDocxReport(audits, reportStats, questions, areaChartImg, historyChartImg, questionChartImages);
+                    await generateDocxReport(audits, reportStats, questionTexts, areaChartImg, historyChartImg, questionChartImages);
                     break;
                 }
               } catch (error) {
@@ -159,7 +157,7 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
         };
     
         generateReport();
-      }, [reportRequest, audits, questions, stats]);
+      }, [reportRequest, audits, questionTexts, stats]);
 
     const handleGenerateSummary = async (audit: CompletedAudit) => {
         setSelectedAuditForSummary(audit);
@@ -168,7 +166,7 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
         setSummaryContent('');
 
         try {
-            const summary = await generateAuditSummary(audit, questions);
+            const summary = await generateAuditSummary(audit, questionTexts);
             setSummaryContent(summary);
         } catch (error) {
             console.error(error);
@@ -183,6 +181,16 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
         setIsReportGenerating(true);
         setReportRequest(type);
     };
+
+    const handleDeleteAudits = async (ids: string[]) => {
+      try {
+        await deleteAuditsByIds(ids);
+        await refreshData();
+      } catch (error) {
+        console.error("Error al eliminar las auditorías:", error);
+        throw error;
+      }
+    };
     
     const renderMainDashboard = () => (
         <div className="space-y-8">
@@ -193,7 +201,7 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
                         Auditorias Internas CV Directo
                     </p>
                 </div>
-                <div className="flex gap-2 flex-shrink-0">
+                <div className="flex gap-2 flex-wrap justify-center sm:justify-end">
                     {isCycleComplete && (
                          <button
                             onClick={onArchiveAndReset}
@@ -207,6 +215,15 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
                         className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 transition-colors duration-200"
                     >
                         Nueva Auditoría
+                    </button>
+                    <button
+                        onClick={() => setIsManageModalOpen(true)}
+                        disabled={audits.length === 0}
+                        className="flex items-center gap-2 rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-600 transition-colors disabled:bg-slate-800 disabled:cursor-not-allowed"
+                        title="Gestionar auditorías"
+                    >
+                        <TrashIcon className="h-4 w-4" />
+                        Gestionar
                     </button>
                     <Dropdown
                         trigger={
@@ -257,7 +274,7 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
                             </thead>
                             <tbody>
                                 {[...audits].reverse().map((audit, index) => (
-                                    <tr key={index} className="bg-slate-900 border-b border-slate-800 hover:bg-slate-800/50">
+                                    <tr key={audit.id || index} className="bg-slate-900 border-b border-slate-800 hover:bg-slate-800/50">
                                         <td className="px-6 py-4">{audit.auditData.fecha}</td>
                                         <td className="px-6 py-4">{audit.auditData.area}</td>
                                         <td className="px-6 py-4">{audit.auditData.nombreAuditor}</td>
@@ -280,16 +297,23 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
     );
 
     if (currentView === 'questions') {
-        return <QuestionAnalysisScreen audits={audits} questions={questions} onBack={() => setCurrentView('main')} />;
+        return <QuestionAnalysisScreen onBack={() => setCurrentView('main')} />;
     }
 
     if (currentView === 'history') {
-        return <HistoryScreen audits={audits} onBack={() => setCurrentView('main')} />;
+        return <HistoryScreen onBack={() => setCurrentView('main')} />;
     }
 
     return (
         <>
             {renderMainDashboard()}
+            {isManageModalOpen && (
+                <ManageAuditsModal
+                    isOpen={isManageModalOpen}
+                    onClose={() => setIsManageModalOpen(false)}
+                    onDelete={handleDeleteAudits}
+                />
+            )}
             {isReportGenerating && (
                 <div style={{ position: 'absolute', left: '-9999px', width: '1100px', top: 0, zIndex: -1 }}>
                     <div ref={areaChartRef}>
@@ -298,7 +322,7 @@ const SummaryDashboardScreen: React.FC<Props> = ({ audits, onStartNewAudit, ques
                     <div ref={historyChartRef}>
                         <HistoryBarChart data={historyData} title="Histórico de Cumplimiento" forExport={true} />
                     </div>
-                    <QuestionAnalysisScreen audits={audits} questions={questions} onBack={()=>{}} chartRefs={questionChartRefs} />
+                    <QuestionAnalysisScreen onBack={()=>{}} chartRefs={questionChartRefs} />
                 </div>
             )}
             {isSummaryModalOpen && selectedAuditForSummary && (

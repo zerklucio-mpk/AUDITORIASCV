@@ -1,16 +1,16 @@
 import React, { useMemo } from 'react';
 import { CompletedAudit, AnswerData } from '../types';
+import { useAppContext } from '../context/AppContext';
 import VerticalGroupedBarChart from './VerticalGroupedBarChart';
 import ArrowLeftIcon from './icons/ArrowLeftIcon';
 
 interface Props {
-  audits: CompletedAudit[];
-  questions: string[];
   onBack: () => void;
   chartRefs?: React.MutableRefObject<(HTMLDivElement | null)[]>;
 }
 
-const QuestionAnalysisScreen: React.FC<Props> = ({ audits, questions, onBack, chartRefs }) => {
+const QuestionAnalysisScreen: React.FC<Props> = ({ onBack, chartRefs }) => {
+  const { audits, questions } = useAppContext();
 
   const questionData = useMemo(() => {
     const stats: { [area: string]: { 'Sí': number; 'No': number; 'N/A': number } }[] = questions.map(() => ({}));
@@ -33,7 +33,7 @@ const QuestionAnalysisScreen: React.FC<Props> = ({ audits, questions, onBack, ch
     });
 
     return questions.map((question, index) => ({
-      question: `${index + 1}. ${question}`,
+      question: `${index + 1}. ${question.text}`,
       dataByArea: Object.entries(stats[index]).map(([name, counts]) => ({ name, ...counts })),
     }));
   }, [audits, questions]);

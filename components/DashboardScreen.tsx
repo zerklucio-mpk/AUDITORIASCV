@@ -1,16 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import { CompletedAudit, AnswerData } from '../types';
+import { useAppContext } from '../context/AppContext';
 import AuditDonutChart from './AuditDonutChart';
 import ArrowLeftIcon from './icons/ArrowLeftIcon';
 
 interface Props {
   audit: CompletedAudit;
-  questions: string[];
   onReturnToSummary: () => void;
   onBack: () => void;
 }
 
-const DashboardScreen: React.FC<Props> = ({ audit, questions, onReturnToSummary, onBack }) => {
+const DashboardScreen: React.FC<Props> = ({ audit, onReturnToSummary, onBack }) => {
+  const { questions } = useAppContext();
   const [viewingImage, setViewingImage] = useState<string | null>(null);
 
   const stats = useMemo(() => {
@@ -24,10 +25,11 @@ const DashboardScreen: React.FC<Props> = ({ audit, questions, onReturnToSummary,
   }, [audit.answers]);
 
   const improvementPoints = useMemo(() => {
+    const questionTexts = questions.map(q => q.text);
     return Object.entries(audit.answers)
       .filter(([, data]: [string, AnswerData]) => data.answer === 'No')
       .map(([index]) => ({
-        question: questions[parseInt(index, 10)],
+        question: questionTexts[parseInt(index, 10)],
         observation: audit.answers[parseInt(index, 10)]?.observation || 'Sin observación.',
         photo: audit.answers[parseInt(index, 10)]?.photo,
       }));
