@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { FirstAidKitArea, FirstAidKit, FirstAidKitAnswers, FirstAidKitAnswer } from '../types';
-import { getFirstAidKitAreas, addFirstAidKitArea, getFirstAidKits, addFirstAidKit, deleteFirstAidKit } from '../services/supabaseClient';
+import { getFirstAidKitAreas, addFirstAidKitArea, deleteFirstAidKitArea, getFirstAidKits, addFirstAidKit, deleteFirstAidKit, deleteAllFirstAidKits } from '../services/supabaseClient';
 import { generateFirstAidKitReportPdf, generateFirstAidKitReportXlsx } from '../services/reportService';
 import SpinnerIcon from './icons/SpinnerIcon';
 import Dropdown from './Dropdown';
@@ -38,10 +38,17 @@ const FirstAidKitsScreen: React.FC = () => {
   const [viewingKit, setViewingKit] = useState<FirstAidKit | null>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
 
-  // States for deletion flow
   const [kitToDelete, setKitToDelete] = useState<FirstAidKit | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const [areaToDelete, setAreaToDelete] = useState<FirstAidKitArea | null>(null);
+  const [isDeletingArea, setIsDeletingArea] = useState(false);
+  const [deleteAreaError, setDeleteAreaError] = useState<string | null>(null);
+
+  const [isResetting, setIsResetting] = useState(false);
+  const [isResetConfirming, setIsResetConfirming] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
 
   const fetchData = useCallback(async () => {
@@ -84,6 +91,32 @@ const FirstAidKitsScreen: React.FC = () => {
       console.error(e);
     } finally {
       setIsAddingArea(false);
+    }
+  };
+  
+  const handleInitiateAreaDelete = (area: FirstAidKitArea, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleteAreaError(null);
+    setAreaToDelete(area);
+  };
+
+  const handleConfirmAreaDelete = async () => {
+    if (!areaToDelete) return;
+
+    setIsDeletingArea(true);
+    setDeleteAreaError(null);
+    try {
+      await deleteFirstAidKitArea(areaToDelete.id);
+      if (selectedAreaId === areaToDelete.id) {
+        setSelectedAreaId(null);
+      }
+      await fetchData();
+      setAreaToDelete(null);
+    } catch (e: any) {
+      setDeleteAreaError(e.message || "Ocurrió un error inesperado al eliminar el área.");
+      console.error(e);
+    } finally {
+      setIsDeletingArea(false);
     }
   };
 
@@ -163,6 +196,26 @@ const FirstAidKitsScreen: React.FC = () => {
     }
   };
 
+  const handleInitiateReset = () => {
+    setResetError(null);
+    setIsResetConfirming(true);
+  };
+
+  const handleConfirmReset = async () => {
+    setIsResetting(true);
+    setResetError(null);
+    try {
+      await deleteAllFirstAidKits();
+      await fetchData();
+      setIsResetConfirming(false);
+    } catch (e: any) {
+      setResetError(e.message || "Ocurrió un error inesperado durante el reinicio.");
+      console.error(e);
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
 
   const handleAnswerChange = (qIndex: number, answer: FirstAidKitAnswer) => {
     setKitAnswers(prev => ({ ...prev, [qIndex]: { ...prev[qIndex], answer } }));
@@ -191,6 +244,12 @@ const FirstAidKitsScreen: React.FC = () => {
     });
   };
 
+  const isResetEnabled = useMemo(() => {
+    if (areas.length === 0 || allKits.length === 0) return false;
+    const registeredAreaIds = new Set(allKits.map(kit => kit.area_id));
+    return areas.every(area => registeredAreaIds.has(area.id));
+  }, [areas, allKits]);
+
 
   const renderAreaList = () => {
     if (isLoading) return <div className="flex items-center justify-center h-full"><SpinnerIcon className="h-8 w-8 animate-spin text-indigo-400" /></div>;
@@ -198,11 +257,18 @@ const FirstAidKitsScreen: React.FC = () => {
     return (
       <ul className="space-y-2">
         {areas.map(area => (
-          <li key={area.id}>
+          <li key={area.id} className="group flex items-center gap-2">
              <button
               onClick={() => handleAreaSelect(area.id)}
-              className={`w-full text-left p-3 rounded-md font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 focus:ring-indigo-500 ${selectedAreaId === area.id ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-800 text-slate-200 hover:bg-slate-700'}`}>
+              className={`flex-grow text-left p-3 rounded-md font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 focus:ring-indigo-500 ${selectedAreaId === area.id ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-800 text-slate-200 hover:bg-slate-700'}`}>
               {area.name}
+            </button>
+            <button
+              onClick={(e) => handleInitiateAreaDelete(area, e)}
+              className="p-2 text-slate-500 rounded-full hover:bg-red-900/50 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+              title={`Eliminar área ${area.name}`}
+            >
+              <TrashIcon className="h-5 w-5" />
             </button>
           </li>
         ))}
@@ -317,10 +383,20 @@ const FirstAidKitsScreen: React.FC = () => {
           <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">Gestión de Botiquines</h2>
           <p className="mt-2 text-lg leading-8 text-slate-400">Administra las áreas y el contenido de los botiquines.</p>
         </div>
-        <Dropdown
-            trigger={<button disabled={areas.length === 0 || isGeneratingReport} className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-md bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600 transition-colors disabled:bg-slate-800 disabled:cursor-not-allowed"> {isGeneratingReport ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : 'Exportar'} {!isGeneratingReport && <ChevronDownIcon className="h-5 w-5"/>} </button>}
-            items={[{ label: 'Exportar PDF', onClick: () => handleRequestReport('pdf') }, { label: 'Exportar Excel (.xlsx)', onClick: () => handleRequestReport('xlsx') }]}
-        />
+        <div className="w-full sm:w-auto flex flex-col sm:flex-row gap-2">
+            <button
+                onClick={handleInitiateReset}
+                disabled={!isResetEnabled || isResetting}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 transition-colors disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed"
+                title={!isResetEnabled ? 'Se debe registrar al menos un botiquín en cada área para poder reiniciar.' : 'Reiniciar todas las inspecciones'}
+            >
+                {isResetting ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : 'Reiniciar Inspecciones'}
+            </button>
+            <Dropdown
+                trigger={<button disabled={areas.length === 0 || isGeneratingReport} className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-md bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600 transition-colors disabled:bg-slate-800 disabled:cursor-not-allowed"> {isGeneratingReport ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : 'Exportar'} {!isGeneratingReport && <ChevronDownIcon className="h-5 w-5"/>} </button>}
+                items={[{ label: 'Exportar PDF', onClick: () => handleRequestReport('pdf') }, { label: 'Exportar Excel (.xlsx)', onClick: () => handleRequestReport('xlsx') }]}
+            />
+        </div>
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
@@ -380,7 +456,6 @@ const FirstAidKitsScreen: React.FC = () => {
       </div>
     </div>
 
-    {/* Deletion Confirmation Modal */}
     {kitToDelete && !deleteError && (
       <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
@@ -422,8 +497,56 @@ const FirstAidKitsScreen: React.FC = () => {
         </div>
       </div>
     )}
+    
+    {areaToDelete && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-900/50 sm:mx-0 sm:h-10 sm:w-10">
+                    <svg className="h-6 w-6 text-red-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                </div>
+                <div className="mt-0 text-left">
+                  <h3 className="text-lg font-semibold leading-6 text-white">Eliminar Área</h3>
+                  <div className="mt-2">
+                    <p className="text-sm text-slate-400">
+                      ¿Estás seguro de que quieres eliminar el área <strong className="text-white">{areaToDelete.name}</strong>?
+                    </p>
+                     <p className="mt-2 text-sm text-yellow-400">
+                      Atención: Se eliminarán permanentemente todos los botiquines registrados en esta área.
+                    </p>
+                    {deleteAreaError && (
+                      <pre className="mt-2 text-xs text-red-300 bg-slate-800 p-2 rounded-md whitespace-pre-wrap">{deleteAreaError}</pre>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="bg-slate-800/50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6 rounded-b-xl">
+              <button
+                type="button"
+                onClick={handleConfirmAreaDelete}
+                disabled={isDeletingArea}
+                className="inline-flex w-full justify-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500 sm:ml-3 sm:w-auto disabled:bg-red-800"
+              >
+                {isDeletingArea ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : 'Confirmar Eliminación'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAreaToDelete(null)}
+                disabled={isDeletingArea}
+                className="mt-3 inline-flex w-full justify-center rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-600 sm:mt-0 sm:w-auto disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-    {/* Deletion Error Modal */}
+
     {deleteError && (
       <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div className="bg-slate-900 border border-red-500/30 rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
@@ -450,6 +573,53 @@ const FirstAidKitsScreen: React.FC = () => {
               className="inline-flex justify-center rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-600"
             >
               Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {isResetConfirming && (
+      <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+          <div className="p-6">
+            <div className="flex items-start gap-4">
+              <div className="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-yellow-900/50 sm:mx-0 sm:h-10 sm:w-10">
+                  <svg className="h-6 w-6 text-yellow-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+              </div>
+              <div className="mt-0 text-left">
+                <h3 className="text-lg font-semibold leading-6 text-white">Confirmar Reinicio</h3>
+                <div className="mt-2">
+                  <p className="text-sm text-slate-400">
+                    ¿Estás seguro de que quieres reiniciar las inspecciones? Se eliminarán todos los registros de botiquines y deberás volver a registrarlos. Esta acción no se puede deshacer.
+                  </p>
+                  {resetError && (
+                    <div className="mt-3 text-xs text-red-300 bg-slate-800 p-2 rounded-md whitespace-pre-wrap">
+                      <strong>Error:</strong> {resetError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="bg-slate-800/50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6 rounded-b-xl">
+            <button
+              type="button"
+              onClick={handleConfirmReset}
+              disabled={isResetting}
+              className="inline-flex w-full justify-center rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 sm:ml-3 sm:w-auto disabled:bg-green-800 disabled:cursor-not-allowed"
+            >
+              {isResetting ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : 'Confirmar Reinicio'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsResetConfirming(false)}
+              disabled={isResetting}
+              className="mt-3 inline-flex w-full justify-center rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-600 sm:mt-0 sm:w-auto disabled:opacity-50"
+            >
+              Cancelar
             </button>
           </div>
         </div>

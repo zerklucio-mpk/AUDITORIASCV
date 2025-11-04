@@ -3,6 +3,7 @@ import { ExtinguisherArea, Extinguisher, InspectionAnswers, InspectionRecord } f
 import { 
   getExtinguisherAreas, 
   addExtinguisherArea, 
+  deleteExtinguisherArea,
   getAllExtinguishers, 
   addExtinguisher, 
   deleteExtinguisher, 
@@ -16,7 +17,6 @@ import SpinnerIcon from './icons/SpinnerIcon';
 import ChevronDownIcon from './icons/ChevronDownIcon';
 import TrashIcon from './icons/TrashIcon';
 import InspectionScreen from './InspectionScreen';
-// FIX: Import XCircleIcon to be used in the error modal.
 import XCircleIcon from './icons/XCircleIcon';
 import Dropdown from './Dropdown';
 
@@ -37,12 +37,14 @@ const ExtinguishersScreen: React.FC = () => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [isSavingExtinguisher, setIsSavingExtinguisher] = useState(false);
   
-  // States for deletion flow
   const [deletingExtinguisherId, setDeletingExtinguisherId] = useState<string | null>(null);
   const [extinguisherToDelete, setExtinguisherToDelete] = useState<Extinguisher | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // States for reset flow
+  const [areaToDelete, setAreaToDelete] = useState<ExtinguisherArea | null>(null);
+  const [isDeletingArea, setIsDeletingArea] = useState(false);
+  const [deleteAreaError, setDeleteAreaError] = useState<string | null>(null);
+
   const [isResetting, setIsResetting] = useState(false);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -95,12 +97,38 @@ const ExtinguishersScreen: React.FC = () => {
       setError(null);
       await addExtinguisherArea(trimmedArea);
       setNewArea('');
-      await fetchData(); // Refresh all data
+      await fetchData(); 
     } catch (e: any) {
       setError('No se pudo añadir el área. Revisa la consola para más detalles.');
       console.error(e);
     } finally {
       setIsAddingArea(false);
+    }
+  };
+  
+  const handleInitiateAreaDelete = (area: ExtinguisherArea, e: React.MouseEvent) => {
+    e.stopPropagation(); 
+    setDeleteAreaError(null);
+    setAreaToDelete(area);
+  };
+  
+  const handleConfirmAreaDelete = async () => {
+    if (!areaToDelete) return;
+
+    setIsDeletingArea(true);
+    setDeleteAreaError(null);
+    try {
+      await deleteExtinguisherArea(areaToDelete.id);
+      if (selectedAreaId === areaToDelete.id) {
+        setSelectedAreaId(null);
+      }
+      await fetchData();
+      setAreaToDelete(null);
+    } catch (e: any) {
+      setDeleteAreaError(e.message || "Ocurrió un error inesperado al eliminar el área.");
+      console.error(e);
+    } finally {
+      setIsDeletingArea(false);
     }
   };
 
@@ -126,7 +154,7 @@ const ExtinguishersScreen: React.FC = () => {
     setError(null);
     try {
         await addExtinguisher({ ...extinguisherForm, area_id: selectedAreaId });
-        await fetchData(); // Refresh all data
+        await fetchData(); 
         setIsRegistering(false);
         setExtinguisherForm({
             location: '',
@@ -154,8 +182,8 @@ const ExtinguishersScreen: React.FC = () => {
     setDeleteError(null);
     try {
         await deleteExtinguisher(extinguisherToDelete.id);
-        await fetchData(); // Refresh all data
-        setExtinguisherToDelete(null); // Close modal on success
+        await fetchData(); 
+        setExtinguisherToDelete(null);
     } catch (e: any) {
         setDeleteError(e.message || "Ocurrió un error inesperado durante la eliminación.");
         console.error(e);
@@ -176,7 +204,7 @@ const ExtinguishersScreen: React.FC = () => {
       await updateExtinguisher(id, detailsToUpdate);
       await addInspection(id, answers);
       
-      await fetchData(); // Refresh all data
+      await fetchData(); 
       setInspectingExtinguisher(null);
 
     } catch (e) {
@@ -266,10 +294,10 @@ const ExtinguishersScreen: React.FC = () => {
     return (
       <ul className="space-y-2">
         {areas.map((area) => (
-          <li key={area.id}>
+          <li key={area.id} className="group flex items-center gap-2">
              <button
               onClick={() => handleAreaSelect(area.id)}
-              className={`w-full text-left p-3 rounded-md font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 focus:ring-indigo-500 ${
+              className={`flex-grow text-left p-3 rounded-md font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 focus:ring-indigo-500 ${
                 selectedAreaId === area.id
                   ? 'bg-indigo-600 text-white shadow-lg'
                   : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
@@ -283,6 +311,13 @@ const ExtinguishersScreen: React.FC = () => {
                   {inspectionStats[area.id]?.inspected || 0} / {inspectionStats[area.id]?.total || 0}
                 </span>
               </div>
+            </button>
+             <button
+              onClick={(e) => handleInitiateAreaDelete(area, e)}
+              className="p-2 text-slate-500 rounded-full hover:bg-red-900/50 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+              title={`Eliminar área ${area.name}`}
+            >
+              <TrashIcon className="h-5 w-5" />
             </button>
           </li>
         ))}
@@ -344,12 +379,10 @@ const ExtinguishersScreen: React.FC = () => {
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
           <h3 className="text-xl font-semibold mb-4 text-white">AREAS</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* Columna Izquierda: Listado de Áreas */}
             <div className="border-2 border-dashed border-slate-700 rounded-lg p-4 min-h-[350px]">
                 {renderAreaList()}
             </div>
             
-            {/* Columna Derecha: Extintores y Formulario */}
             <div className="border-2 border-dashed border-slate-700 rounded-lg p-4 min-h-[350px] flex flex-col">
               {!selectedArea ? (
                 <div className="flex-1 flex items-center justify-center">
@@ -485,7 +518,6 @@ const ExtinguishersScreen: React.FC = () => {
         </div>
       </div>
 
-      {/* Deletion Confirmation Modal */}
       {extinguisherToDelete && !deleteError && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
@@ -528,7 +560,6 @@ const ExtinguishersScreen: React.FC = () => {
         </div>
       )}
 
-      {/* Deletion Error Modal */}
       {deleteError && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-red-500/30 rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
@@ -561,7 +592,55 @@ const ExtinguishersScreen: React.FC = () => {
         </div>
       )}
 
-      {/* Reset Confirmation Modal */}
+      {areaToDelete && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-900/50 sm:mx-0 sm:h-10 sm:w-10">
+                    <svg className="h-6 w-6 text-red-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                </div>
+                <div className="mt-0 text-left">
+                  <h3 className="text-lg font-semibold leading-6 text-white">Eliminar Área</h3>
+                  <div className="mt-2">
+                    <p className="text-sm text-slate-400">
+                      ¿Estás seguro de que quieres eliminar el área <strong className="text-white">{areaToDelete.name}</strong>?
+                    </p>
+                     <p className="mt-2 text-sm text-yellow-400">
+                      Atención: Se eliminarán permanentemente todos los extintores registrados en esta área.
+                    </p>
+                    {deleteAreaError && (
+                      <pre className="mt-2 text-xs text-red-300 bg-slate-800 p-2 rounded-md whitespace-pre-wrap">{deleteAreaError}</pre>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="bg-slate-800/50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6 rounded-b-xl">
+              <button
+                type="button"
+                onClick={handleConfirmAreaDelete}
+                disabled={isDeletingArea}
+                className="inline-flex w-full justify-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500 sm:ml-3 sm:w-auto disabled:bg-red-800"
+              >
+                {isDeletingArea ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : 'Confirmar Eliminación'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAreaToDelete(null)}
+                disabled={isDeletingArea}
+                className="mt-3 inline-flex w-full justify-center rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-600 sm:mt-0 sm:w-auto disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
       {isResetConfirming && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>

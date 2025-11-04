@@ -161,6 +161,14 @@ export async function addExtinguisherArea(name: string): Promise<void> {
   await handleResponse<void>(response);
 }
 
+export async function deleteExtinguisherArea(id: string): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguisher_areas?id=eq.${id}`, {
+    method: 'DELETE',
+    headers: writeHeaders,
+  });
+  await handleResponse<void>(response);
+}
+
 // --- Operaciones con Extintores ---
 
 export async function getAllExtinguishers(): Promise<Extinguisher[]> {
@@ -256,6 +264,14 @@ export async function addFirstAidKitArea(name: string): Promise<void> {
   await handleResponse<void>(response);
 }
 
+export async function deleteFirstAidKitArea(id: string): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/first_aid_kit_areas?id=eq.${id}`, {
+    method: 'DELETE',
+    headers: writeHeaders,
+  });
+  await handleResponse<void>(response);
+}
+
 // --- Operaciones con Botiquines ---
 
 export async function getFirstAidKits(): Promise<FirstAidKit[]> {
@@ -282,6 +298,14 @@ export async function addFirstAidKit(data: AddFirstAidKitData): Promise<void> {
 
 export async function deleteFirstAidKit(id: string): Promise<void> {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/first_aid_kits?id=eq.${id}`, {
+    method: 'DELETE',
+    headers: writeHeaders,
+  });
+  await handleResponse<void>(response);
+}
+
+export async function deleteAllFirstAidKits(): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/first_aid_kits?id=not.is.null`, {
     method: 'DELETE',
     headers: writeHeaders,
   });
