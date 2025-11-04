@@ -1,4 +1,4 @@
-import { CompletedAudit, HistorySnapshot, Question, Area } from '../types';
+import { CompletedAudit, HistorySnapshot, Question, Area, ExtinguisherArea, Extinguisher, InspectionRecord, InspectionAnswers, FirstAidKitArea, FirstAidKit, FirstAidKitAnswers } from '../types';
 
 // --- PASO CRÍTICO DE CONFIGURACIÓN ---
 // Por favor, reemplaza los siguientes dos valores con tu URL y tu clave anónima (public) de Supabase.
@@ -22,7 +22,7 @@ const baseHeaders = {
   'Content-Type': 'application/json',
 };
 
-// Cabeceras para operaciones que escriben datos (POST, DELETE)
+// Cabeceras para operaciones que escriben datos (POST, DELETE, PATCH)
 const writeHeaders = {
   ...baseHeaders,
   'Prefer': 'return=minimal',
@@ -56,12 +56,19 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json();
 }
 
-const isConfigured = () => !SUPABASE_URL.includes('PON_TU_URL');
+const isConfigured = () => SUPABASE_URL && SUPABASE_ANON_KEY && !SUPABASE_URL.includes('YOUR_SUPABASE_URL');
+
+if (!isConfigured()) {
+  const errorMsg = "Por favor, configura tu URL y clave anónima de Supabase en el archivo 'services/supabaseClient.ts'. Debes reemplazar 'YOUR_SUPABASE_URL' y 'YOUR_SUPABASE_ANON_KEY' con tus credenciales reales.";
+  console.error(errorMsg);
+  // Lanzar el error aquí previene que la app intente hacer llamadas a una API no configurada.
+  throw new Error(errorMsg);
+}
+
 
 // --- Operaciones con Auditorías ---
 
 export async function getAudits(): Promise<CompletedAudit[]> {
-  if (!isConfigured()) return [];
   const response = await fetch(`${SUPABASE_URL}/rest/v1/audits?select=id,audit_data,answers`, {
     headers: readHeaders,
   });
@@ -70,8 +77,6 @@ export async function getAudits(): Promise<CompletedAudit[]> {
 }
 
 export async function addAudit(audit: Omit<CompletedAudit, 'id'>): Promise<void> {
-  if (!isConfigured()) throw new Error("Supabase no está configurado.");
-  
   const body = {
     audit_data: audit.auditData,
     answers: audit.answers,
@@ -85,7 +90,7 @@ export async function addAudit(audit: Omit<CompletedAudit, 'id'>): Promise<void>
 }
 
 export async function deleteAuditsByIds(ids: string[]): Promise<void> {
-    if (!isConfigured() || ids.length === 0) return;
+    if (ids.length === 0) return;
 
     const response = await fetch(`${SUPABASE_URL}/rest/v1/audits?id=in.(${ids.join(',')})`, {
         method: 'DELETE',
@@ -95,8 +100,6 @@ export async function deleteAuditsByIds(ids: string[]): Promise<void> {
 }
 
 export async function deleteAllAudits(): Promise<void> {
-    if (!isConfigured()) throw new Error("Supabase no está configurado.");
-
     const response = await fetch(`${SUPABASE_URL}/rest/v1/audits?id=not.is.null`, {
         method: 'DELETE',
         headers: writeHeaders,
@@ -108,7 +111,6 @@ export async function deleteAllAudits(): Promise<void> {
 // --- Operaciones con Snapshots ---
 
 export async function getSnapshots(): Promise<HistorySnapshot[]> {
-    if (!isConfigured()) return [];
     const response = await fetch(`${SUPABASE_URL}/rest/v1/snapshots?select=*`, {
         headers: readHeaders,
     });
@@ -116,8 +118,6 @@ export async function getSnapshots(): Promise<HistorySnapshot[]> {
 }
 
 export async function addSnapshot(snapshot: HistorySnapshot): Promise<void> {
-    if (!isConfigured()) throw new Error("Supabase no está configurado.");
-
     const response = await fetch(`${SUPABASE_URL}/rest/v1/snapshots`, {
         method: 'POST',
         headers: writeHeaders,
@@ -129,7 +129,6 @@ export async function addSnapshot(snapshot: HistorySnapshot): Promise<void> {
 // --- Operaciones con Datos de Configuración ---
 
 export async function getQuestions(): Promise<Question[]> {
-  if (!isConfigured()) return [];
   const response = await fetch(`${SUPABASE_URL}/rest/v1/questions?select=*&is_active=eq.true&order=display_order.asc`, {
     headers: readHeaders,
   });
@@ -137,9 +136,154 @@ export async function getQuestions(): Promise<Question[]> {
 }
 
 export async function getAreas(): Promise<Area[]> {
-  if (!isConfigured()) return [];
   const response = await fetch(`${SUPABASE_URL}/rest/v1/areas?select=*&is_active=eq.true&order=name.asc`, {
     headers: readHeaders,
   });
   return handleResponse<Area[]>(response);
+}
+
+// --- Operaciones con Áreas de Extintores ---
+
+export async function getExtinguisherAreas(): Promise<ExtinguisherArea[]> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguisher_areas?select=*&order=created_at.desc`, {
+    headers: readHeaders,
+  });
+  return handleResponse<ExtinguisherArea[]>(response);
+}
+
+export async function addExtinguisherArea(name: string): Promise<void> {
+  const body = { name };
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguisher_areas`, {
+    method: 'POST',
+    headers: writeHeaders,
+    body: JSON.stringify(body),
+  });
+  await handleResponse<void>(response);
+}
+
+// --- Operaciones con Extintores ---
+
+export async function getAllExtinguishers(): Promise<Extinguisher[]> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguishers?select=*&order=created_at.asc`, {
+    headers: readHeaders,
+  });
+  return handleResponse<Extinguisher[]>(response);
+}
+
+type AddExtinguisherData = {
+  area_id: string;
+  location: string;
+  series: string;
+  type: string;
+  capacity: string;
+};
+
+export async function addExtinguisher(data: AddExtinguisherData): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguishers`, {
+    method: 'POST',
+    headers: writeHeaders,
+    body: JSON.stringify(data),
+  });
+  await handleResponse<void>(response);
+}
+
+type UpdateExtinguisherData = Omit<Extinguisher, 'id' | 'created_at' | 'area_id'>;
+
+export async function updateExtinguisher(id: string, data: UpdateExtinguisherData): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguishers?id=eq.${id}`, {
+    method: 'PATCH',
+    headers: writeHeaders,
+    body: JSON.stringify(data),
+  });
+  await handleResponse<void>(response);
+}
+
+
+export async function deleteExtinguisher(id: string): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguishers?id=eq.${id}`, {
+    method: 'DELETE',
+    headers: writeHeaders,
+  });
+  await handleResponse<void>(response);
+}
+
+// --- Operaciones con Inspecciones de Extintores ---
+
+export async function getExtinguisherInspections(): Promise<InspectionRecord[]> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguisher_inspections?select=*`, {
+    headers: readHeaders,
+  });
+  return handleResponse<InspectionRecord[]>(response);
+}
+
+export async function addInspection(extinguisher_id: string, answers: InspectionAnswers): Promise<void> {
+  const body: Omit<InspectionRecord, 'id' | 'created_at'> = {
+    extinguisher_id,
+    answers
+  };
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguisher_inspections`, {
+    method: 'POST',
+    headers: writeHeaders,
+    body: JSON.stringify(body),
+  });
+  await handleResponse<void>(response);
+}
+
+export async function deleteAllInspections(): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/extinguisher_inspections?id=not.is.null`, {
+    method: 'DELETE',
+    headers: writeHeaders,
+  });
+  await handleResponse<void>(response);
+}
+
+// --- Operaciones con Áreas de Botiquines ---
+
+export async function getFirstAidKitAreas(): Promise<FirstAidKitArea[]> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/first_aid_kit_areas?select=*&order=created_at.desc`, {
+    headers: readHeaders,
+  });
+  return handleResponse<FirstAidKitArea[]>(response);
+}
+
+export async function addFirstAidKitArea(name: string): Promise<void> {
+  const body = { name };
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/first_aid_kit_areas`, {
+    method: 'POST',
+    headers: writeHeaders,
+    body: JSON.stringify(body),
+  });
+  await handleResponse<void>(response);
+}
+
+// --- Operaciones con Botiquines ---
+
+export async function getFirstAidKits(): Promise<FirstAidKit[]> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/first_aid_kits?select=*&order=created_at.asc`, {
+    headers: readHeaders,
+  });
+  return handleResponse<FirstAidKit[]>(response);
+}
+
+type AddFirstAidKitData = {
+  area_id: string;
+  location: string;
+  inspection_data: FirstAidKitAnswers;
+};
+
+export async function addFirstAidKit(data: AddFirstAidKitData): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/first_aid_kits`, {
+    method: 'POST',
+    headers: writeHeaders,
+    body: JSON.stringify(data),
+  });
+  await handleResponse<void>(response);
+}
+
+export async function deleteFirstAidKit(id: string): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/first_aid_kits?id=eq.${id}`, {
+    method: 'DELETE',
+    headers: writeHeaders,
+  });
+  await handleResponse<void>(response);
 }

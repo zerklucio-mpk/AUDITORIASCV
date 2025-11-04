@@ -8,11 +8,16 @@ import AuditQuestionsScreen from './components/AuditQuestionsScreen';
 import DashboardScreen from './components/DashboardScreen';
 import SummaryDashboardScreen from './components/SummaryDashboardScreen';
 import SpinnerIcon from './components/icons/SpinnerIcon';
+import Sidebar from './components/Sidebar';
+import ExtinguishersScreen from './components/ExtinguishersScreen';
+import FirstAidKitsScreen from './components/FirstAidKitsScreen';
 
 export type Screen = 'summary' | 'welcome' | 'questions' | 'dashboard';
+export type ActiveView = 'areas' | 'extintores' | 'botiquines';
 
 const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<Screen>('summary');
+  const [activeView, setActiveView] = useState<ActiveView>('areas');
   const [completedAudits, setCompletedAudits] = useState<CompletedAudit[]>([]);
   const [historicalSnapshots, setHistoricalSnapshots] = useState<HistorySnapshot[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -160,6 +165,14 @@ const App: React.FC = () => {
         </div>
       );
     }
+
+    if (activeView === 'extintores') {
+      return <ExtinguishersScreen />;
+    }
+
+    if (activeView === 'botiquines') {
+      return <FirstAidKitsScreen />;
+    }
     
     switch (currentScreen) {
       case 'summary':
@@ -183,18 +196,16 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="bg-black min-h-screen text-slate-200 font-sans">
-      <header className="bg-slate-900/50 backdrop-blur-sm border-b border-slate-800 sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-3">
-          <h1 className="text-xl font-bold text-center text-white">Suave y Facil S.A. de C.V.</h1>
-        </div>
-      </header>
-      <main className="container mx-auto px-4 py-8 sm:py-12">
-        <AppProvider value={appContextValue}>
-          {renderContent()}
-        </AppProvider>
-      </main>
-    </div>
+    <AppProvider value={appContextValue}>
+      <div className="bg-black min-h-screen text-slate-200 font-sans flex">
+        <Sidebar activeView={activeView} setActiveView={setActiveView} />
+        <main className="flex-1 overflow-y-auto">
+           <div className="container mx-auto px-4 py-8 sm:py-12">
+            {renderContent()}
+          </div>
+        </main>
+      </div>
+    </AppProvider>
   );
 };
 

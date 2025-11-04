@@ -17,7 +17,8 @@ export async function generateAuditSummary(audit: CompletedAudit, questions: str
     const photosToAnalyze: string[] = [];
 
     const answeredQuestionsText = Object.entries(answers)
-        .map(([index, data]) => {
+        // FIX: Explicitly type the destructured 'data' object to ensure correct property access.
+        .map(([index, data]: [string, AnswerData]) => {
             const questionText = questions[parseInt(index, 10)];
             let answerString = `- Pregunta: "${questionText}"\n  Respuesta: ${data.answer}`;
             if (data.observation) {

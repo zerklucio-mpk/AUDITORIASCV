@@ -3,7 +3,8 @@ import 'jspdf-autotable';
 import Excel from 'exceljs';
 import saveAs from 'file-saver';
 import { Document, Packer, Paragraph, TextRun, Table, TableCell, TableRow, WidthType, ImageRun, AlignmentType } from 'docx';
-import { CompletedAudit } from '../types';
+// FIX: Import AnswerData to correctly type the audit answer objects.
+import { CompletedAudit, AnswerData, ExtinguisherArea, Extinguisher, InspectionRecord, InspectionAnswers, FirstAidKitArea, FirstAidKit } from '../types';
 
 const base64ToUint8Array = (base64: string): Uint8Array => {
     const binaryString = atob(base64.replace(/^data:image\/[a-z]+;base64,/, ''));
@@ -52,7 +53,8 @@ const prepareReportData = (audits: CompletedAudit[], questions: string[]) => {
   for (const audit of audits) {
     const { area, fecha, nombreAuditor } = audit.auditData;
 
-    Object.entries(audit.answers).forEach(([indexStr, answerData]) => {
+    // FIX: Explicitly type the destructured 'answerData' object to ensure correct property access.
+    Object.entries(audit.answers).forEach(([indexStr, answerData]: [string, AnswerData]) => {
       const index = parseInt(indexStr, 10);
       const questionText = questions[index] || `Pregunta ${index + 1} no encontrada`;
       
@@ -150,12 +152,12 @@ export const generatePdfReport = async (
         doc.splitTextToSize(row.observacion || '', 60),
     ]);
 
-    doc.autoTable({
+    (doc as any).autoTable({
         head, body, startY: finalY, theme: 'grid',
         headStyles: { fillColor: [41, 128, 185] },
         didDrawPage: (data: any) => { finalY = data.cursor.y; }
     });
-    finalY = doc.lastAutoTable.finalY + 5;
+    finalY = (doc as any).lastAutoTable.finalY + 5;
     
     const rowsWithPhotos = areaRows.filter(r => r.photo);
     if(rowsWithPhotos.length > 0) {
@@ -385,4 +387,427 @@ export const generateDocxReport = async (
     const doc = new Document({ sections: [{ properties: {}, children: docChildren }] });
     const buffer = await Packer.toBlob(doc);
     saveAs(buffer, generateFileName('Reporte_Auditorias_5S', 'docx'));
+};
+
+// --- Reporte de Extintores ---
+
+const inspectionQuestions = [
+  "¿El extintor cuenta con presión?",
+  "¿El extintor cuenta con manguera, boquilla y cono?",
+  "¿El extintor cuenta con manómetro?",
+  "¿El extintor se encuentra en buen estado?",
+  "¿La señalización se encuentra visible?",
+  "¿El extintor cuenta con su sello y pasador de seguridad?",
+  "¿El extintor se encuentra libre de obstáculos?"
+];
+
+export const generateExtinguisherReportPdf = async (
+  areas: ExtinguisherArea[],
+  extinguishers: Extinguisher[],
+  inspections: InspectionRecord[]
+) => {
+  const doc = new jsPDF();
+  const pdfPageWidth = doc.internal.pageSize.getWidth();
+  let finalY = 25;
+
+  const inspectedExtinguisherIds = new Set(inspections.map(i => i.extinguisher_id));
+  const inspectionsMap = new Map(inspections.map(i => [i.extinguisher_id, i]));
+
+  // --- Página de Título y Resumen ---
+  doc.setFontSize(22);
+  doc.text("Reporte de Extintores", pdfPageWidth / 2, finalY, { align: 'center' });
+  finalY += 20;
+  doc.setFontSize(16);
+  doc.text("Resumen General", 15, finalY);
+  finalY += 10;
+  doc.setFontSize(12);
+  doc.text(`Total de Áreas: ${areas.length}`, 15, finalY);
+  doc.text(`Total de Extintores: ${extinguishers.length}`, 80, finalY);
+  doc.text(`Total de Inspecciones: ${inspections.length}`, 150, finalY);
+  finalY += 15;
+
+  // --- Detalle por Área ---
+  for (const area of areas) {
+    const extinguishersInArea = extinguishers.filter(e => e.area_id === area.id);
+    if (extinguishersInArea.length === 0) continue;
+
+    if (finalY > 250) {
+      doc.addPage();
+      finalY = 20;
+    }
+
+    doc.setFontSize(14);
+    doc.text(`Área: ${area.name}`, 15, finalY);
+    finalY += 8;
+
+    const headExtinguishers = [['Ubicación', 'Serie', 'Tipo', 'Capacidad', 'Estado']];
+    const bodyExtinguishers = extinguishersInArea.map(ext => [
+      ext.location,
+      ext.series || 'N/A',
+      ext.type,
+      ext.capacity,
+      inspectedExtinguisherIds.has(ext.id) ? 'Inspeccionado' : 'Pendiente'
+    ]);
+
+    (doc as any).autoTable({
+      head: headExtinguishers,
+      body: bodyExtinguishers,
+      startY: finalY,
+      theme: 'grid',
+      headStyles: { fillColor: [41, 128, 185] }, // Azul
+      didDrawPage: (data: any) => { finalY = data.cursor.y; }
+    });
+    finalY = (doc as any).lastAutoTable.finalY + 10;
+    
+    // --- Detalle de Inspecciones por Extintor ---
+    const inspectedInArea = extinguishersInArea.filter(e => inspectedExtinguisherIds.has(e.id));
+    
+    if (inspectedInArea.length > 0) {
+       if (finalY > 250) {
+        doc.addPage();
+        finalY = 20;
+       }
+       doc.setFontSize(12);
+       doc.text(`Resultados de Inspecciones en ${area.name}`, 15, finalY);
+       finalY += 8;
+    }
+
+    for (const ext of inspectedInArea) {
+      const inspection = inspectionsMap.get(ext.id);
+      if (!inspection) continue;
+
+      if (finalY > 250) {
+        doc.addPage();
+        finalY = 20;
+      }
+
+      doc.setFontSize(10);
+      doc.text(`Inspección para: ${ext.location} (Serie: ${ext.series || 'N/A'})`, 15, finalY, { textColor: 'gray' });
+      finalY += 6;
+
+      const headInspection = [['Pregunta', 'Respuesta', 'Observación', 'Foto']];
+      const bodyInspection = inspectionQuestions.map((q, index) => {
+        const answerData = inspection.answers[index];
+        return [
+          doc.splitTextToSize(q, 70),
+          answerData?.answer || 'N/A',
+          doc.splitTextToSize(answerData?.observation || '', 60),
+          answerData?.photo ? 'Sí' : 'No'
+        ];
+      });
+
+      (doc as any).autoTable({
+        head: headInspection,
+        body: bodyInspection,
+        startY: finalY,
+        theme: 'striped',
+        headStyles: { fillColor: [80, 80, 80] }, // Gris oscuro
+        didDrawPage: (data: any) => { finalY = data.cursor.y; }
+      });
+      finalY = (doc as any).lastAutoTable.finalY + 8;
+    }
+  }
+
+  doc.save(generateFileName('Reporte_Extintores', 'pdf'));
+};
+
+export const generateExtinguisherReportXlsx = async (
+  areas: ExtinguisherArea[],
+  extinguishers: Extinguisher[],
+  inspections: InspectionRecord[]
+) => {
+  const workbook = new Excel.Workbook();
+  workbook.creator = 'AuditApp';
+  workbook.created = new Date();
+
+  const inspectedExtinguisherIds = new Set(inspections.map(i => i.extinguisher_id));
+  const inspectionsMap = new Map(inspections.map(i => [i.extinguisher_id, i]));
+  const areaMap = new Map(areas.map(a => [a.id, a.name]));
+
+  // --- Hoja de Resumen ---
+  const summarySheet = workbook.addWorksheet('Resumen');
+  summarySheet.mergeCells('A1:B1');
+  summarySheet.getCell('A1').value = 'Reporte de Extintores';
+  summarySheet.getCell('A1').font = { size: 18, bold: true };
+  summarySheet.getCell('A3').value = 'Total de Áreas';
+  summarySheet.getCell('B3').value = areas.length;
+  summarySheet.getCell('A4').value = 'Total de Extintores';
+  summarySheet.getCell('B4').value = extinguishers.length;
+  summarySheet.getCell('A5').value = 'Total de Inspecciones';
+  summarySheet.getCell('B5').value = inspections.length;
+  summarySheet.getCell('A3').font = { bold: true };
+  summarySheet.getCell('A4').font = { bold: true };
+  summarySheet.getCell('A5').font = { bold: true };
+
+  // --- Hoja de Detalle de Extintores ---
+  const detailSheet = workbook.addWorksheet('Detalle Extintores');
+  detailSheet.columns = [
+    { header: 'Área', key: 'area', width: 30 },
+    { header: 'Ubicación', key: 'location', width: 30 },
+    { header: 'Serie', key: 'series', width: 20 },
+    { header: 'Tipo', key: 'type', width: 15 },
+    { header: 'Capacidad', key: 'capacity', width: 15 },
+    { header: 'Estado', key: 'status', width: 20 },
+  ];
+  extinguishers.forEach(ext => {
+    detailSheet.addRow({
+      area: areaMap.get(ext.area_id) || 'Desconocida',
+      location: ext.location,
+      series: ext.series || 'N/A',
+      type: ext.type,
+      capacity: ext.capacity,
+      status: inspectedExtinguisherIds.has(ext.id) ? 'Inspeccionado' : 'Pendiente'
+    });
+  });
+
+  // --- Hoja de Resultados de Inspecciones ---
+  const inspectionSheet = workbook.addWorksheet('Resultados Inspecciones');
+  inspectionSheet.columns = [
+    { header: 'Área', key: 'area', width: 30 },
+    { header: 'Ubicación Extintor', key: 'location', width: 30 },
+    { header: 'Serie Extintor', key: 'series', width: 20 },
+    { header: 'N° Pregunta', key: 'qNum', width: 15 },
+    { header: 'Pregunta', key: 'question', width: 60 },
+    { header: 'Respuesta', key: 'answer', width: 15 },
+    { header: 'Observación', key: 'observation', width: 50 },
+    { header: 'Tiene Foto', key: 'photo', width: 15 },
+  ];
+  extinguishers.forEach(ext => {
+    if (inspectedExtinguisherIds.has(ext.id)) {
+      const inspection = inspectionsMap.get(ext.id);
+      if (inspection) {
+        inspectionQuestions.forEach((q, index) => {
+          const answerData = inspection.answers[index];
+          inspectionSheet.addRow({
+            area: areaMap.get(ext.area_id) || 'Desconocida',
+            location: ext.location,
+            series: ext.series || 'N/A',
+            qNum: index + 1,
+            question: q,
+            answer: answerData?.answer || 'N/A',
+            observation: answerData?.observation || '',
+            photo: answerData?.photo ? 'Sí' : 'No'
+          });
+        });
+      }
+    }
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  saveAs(new Blob([buffer]), generateFileName('Reporte_Extintores', 'xlsx'));
+};
+
+
+// --- Reporte de Botiquines ---
+
+const firstAidKitQuestions = [
+  "¿Se encuentra libre de obstáculos?",
+  "¿Cuenta con su señalización?",
+  "¿Presenta daños el botiquín?",
+  "¿Cuenta con todos los materiales?",
+  "¿Cuenta con checklist?"
+];
+
+export const generateFirstAidKitReportPdf = async (
+  areas: FirstAidKitArea[],
+  kits: FirstAidKit[]
+) => {
+  const doc = new jsPDF();
+  const pdfPageWidth = doc.internal.pageSize.getWidth();
+  const margin = 15;
+  const maxWidth = pdfPageWidth - margin * 2;
+  let finalY = 25;
+
+  // --- Página de Título y Resumen ---
+  doc.setFontSize(22);
+  doc.text("Reporte de Botiquines", pdfPageWidth / 2, finalY, { align: 'center' });
+  finalY += 20;
+  doc.setFontSize(16);
+  doc.text("Resumen General", 15, finalY);
+  finalY += 10;
+  doc.setFontSize(12);
+  doc.text(`Total de Áreas: ${areas.length}`, 15, finalY);
+  doc.text(`Total de Botiquines Registrados: ${kits.length}`, 80, finalY);
+  finalY += 15;
+
+  // --- Detalle por Área ---
+  for (const area of areas) {
+    const kitsInArea = kits.filter(k => k.area_id === area.id);
+    if (kitsInArea.length === 0) continue;
+
+    if (finalY > 250) {
+      doc.addPage();
+      finalY = 20;
+    }
+
+    doc.setFontSize(14);
+    doc.text(`Área: ${area.name}`, 15, finalY);
+    finalY += 10;
+    
+    for (const kit of kitsInArea) {
+      if (finalY > 250) {
+        doc.addPage();
+        finalY = 20;
+      }
+      doc.setFontSize(12);
+      doc.text(`Inspección de Registro para Botiquín en: ${kit.location}`, 15, finalY, { textColor: 'gray' });
+      finalY += 8;
+
+      const headInspection = [['Pregunta', 'Respuesta', 'Observación', 'Foto']];
+      const bodyInspection = firstAidKitQuestions.map((q, index) => {
+        const answerData = kit.inspection_data[index];
+        return [
+          doc.splitTextToSize(q, 70),
+          answerData?.answer || 'N/A',
+          doc.splitTextToSize(answerData?.observation || '', 60),
+          answerData?.photo ? 'Sí' : 'No'
+        ];
+      });
+
+      (doc as any).autoTable({
+        head: headInspection,
+        body: bodyInspection,
+        startY: finalY,
+        theme: 'striped',
+        headStyles: { fillColor: [22, 163, 74] }, // Verde
+        didDrawPage: (data: any) => { finalY = data.cursor.y; }
+      });
+      finalY = (doc as any).lastAutoTable.finalY + 8;
+
+      // --- Sección de Evidencia Fotográfica ---
+      const photosForKit = firstAidKitQuestions
+        .map((q, index) => ({ q, answer: kit.inspection_data[index] }))
+        .filter(item => item.answer?.photo);
+
+      if (photosForKit.length > 0) {
+        if (finalY > 250) { doc.addPage(); finalY = 20; }
+        doc.setFontSize(11);
+        doc.text(`Evidencia para Botiquín en ${kit.location}:`, 15, finalY);
+        finalY += 8;
+
+        for (const item of photosForKit) {
+          if (finalY > 230) { doc.addPage(); finalY = 20; }
+          doc.setFontSize(9);
+          doc.text(`- Pregunta: ${item.q}`, 15, finalY, { maxWidth: maxWidth });
+          finalY += 4;
+          try {
+            const photo = item.answer.photo!;
+            const photoDims = await getImageDimensions(photo);
+            const photoWidth = 70;
+            const photoHeight = photoWidth * (photoDims.height / photoDims.width);
+            if (finalY + photoHeight > 280) { doc.addPage(); finalY = 20; }
+            doc.addImage(photo, 'JPEG', 20, finalY + 2, photoWidth, photoHeight, undefined, 'NONE');
+            finalY += photoHeight + 8;
+          } catch(e) { console.error("Error adding image to PDF:", e) }
+        }
+      }
+    }
+  }
+
+  doc.save(generateFileName('Reporte_Botiquines', 'pdf'));
+};
+
+export const generateFirstAidKitReportXlsx = async (
+  areas: FirstAidKitArea[],
+  kits: FirstAidKit[]
+) => {
+  const workbook = new Excel.Workbook();
+  workbook.creator = 'AuditApp';
+  workbook.created = new Date();
+  
+  const areaMap = new Map(areas.map(a => [a.id, a.name]));
+
+  // --- Hoja de Resumen ---
+  const summarySheet = workbook.addWorksheet('Resumen');
+  summarySheet.mergeCells('A1:B1');
+  summarySheet.getCell('A1').value = 'Reporte de Botiquines';
+  summarySheet.getCell('A1').font = { size: 18, bold: true };
+  summarySheet.getCell('A3').value = 'Total de Áreas';
+  summarySheet.getCell('B3').value = areas.length;
+  summarySheet.getCell('A4').value = 'Total de Botiquines';
+  summarySheet.getCell('B4').value = kits.length;
+  summarySheet.getCell('A3').font = { bold: true };
+  summarySheet.getCell('A4').font = { bold: true };
+
+  // --- Hoja de Detalle de Botiquines ---
+  const detailSheet = workbook.addWorksheet('Detalle Botiquines');
+  detailSheet.columns = [
+    { header: 'Área', key: 'area', width: 30 },
+    { header: 'Ubicación', key: 'location', width: 40 },
+    { header: 'Fecha de Registro', key: 'created_at', width: 25 },
+  ];
+  kits.forEach(kit => {
+    detailSheet.addRow({
+      area: areaMap.get(kit.area_id) || 'Desconocida',
+      location: kit.location,
+      created_at: new Date(kit.created_at).toLocaleString()
+    });
+  });
+
+  // --- Hoja de Resultados de Inspección de Registro ---
+  const inspectionSheet = workbook.addWorksheet('Resultados Inspección');
+  inspectionSheet.columns = [
+    { header: 'Área', key: 'area', width: 30 },
+    { header: 'Ubicación Botiquín', key: 'location', width: 40 },
+    { header: 'N° Pregunta', key: 'qNum', width: 15 },
+    { header: 'Pregunta', key: 'question', width: 60 },
+    { header: 'Respuesta', key: 'answer', width: 15 },
+    { header: 'Observación', key: 'observation', width: 50 },
+    { header: 'Tiene Foto', key: 'photo', width: 15 },
+  ];
+  kits.forEach(kit => {
+    firstAidKitQuestions.forEach((q, index) => {
+      const answerData = kit.inspection_data[index];
+      inspectionSheet.addRow({
+        area: areaMap.get(kit.area_id) || 'Desconocida',
+        location: kit.location,
+        qNum: index + 1,
+        question: q,
+        answer: answerData?.answer || 'N/A',
+        observation: answerData?.observation || '',
+        photo: answerData?.photo ? 'Sí' : 'No'
+      });
+    });
+  });
+  
+  // --- Hoja de Evidencia Fotográfica ---
+  const photoSheet = workbook.addWorksheet('Evidencia Fotográfica');
+  photoSheet.columns = [
+    { header: 'Área', key: 'area', width: 30 },
+    { header: 'Ubicación Botiquín', key: 'location', width: 40 },
+    { header: 'N° Pregunta', key: 'qNum', width: 15 },
+    { header: 'Pregunta', key: 'question', width: 60 },
+  ];
+
+  let photoSheetRow = 2;
+  for (const kit of kits) {
+    for (let i = 0; i < firstAidKitQuestions.length; i++) {
+      const answerData = kit.inspection_data[i];
+      if (answerData?.photo) {
+        photoSheet.addRow({
+          area: areaMap.get(kit.area_id) || 'Desconocida',
+          location: kit.location,
+          qNum: i + 1,
+          question: firstAidKitQuestions[i]
+        });
+
+        const photoDims = await getImageDimensions(answerData.photo);
+        const photoWidth = 200;
+        const photoHeight = photoWidth * (photoDims.height / photoDims.width);
+        const imageId = workbook.addImage({ base64: answerData.photo, extension: 'png' });
+        
+        photoSheet.addImage(imageId, {
+          tl: { col: 4, row: photoSheetRow - 1 },
+          ext: { width: photoWidth, height: photoHeight }
+        });
+        
+        photoSheet.getRow(photoSheetRow).height = photoHeight * 0.75;
+        photoSheetRow++;
+      }
+    }
+  }
+
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  saveAs(new Blob([buffer]), generateFileName('Reporte_Botiquines', 'xlsx'));
 };
