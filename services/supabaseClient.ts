@@ -136,7 +136,7 @@ export async function getQuestions(): Promise<Question[]> {
 }
 
 export async function getAreas(): Promise<Area[]> {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/areas?select=*&is_active=eq.true&order=name.asc`, {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/areas?select=*&order=name.asc`, {
     headers: readHeaders,
   });
   return handleResponse<Area[]>(response);
