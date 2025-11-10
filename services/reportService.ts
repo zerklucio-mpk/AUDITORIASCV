@@ -3,27 +3,9 @@ import 'jspdf-autotable';
 import Excel from 'exceljs';
 import saveAs from 'file-saver';
 import { Document, Packer, Paragraph, TextRun, Table, TableCell, TableRow, WidthType, ImageRun, AlignmentType } from 'docx';
-// FIX: Import AnswerData to correctly type the audit answer objects.
-import { CompletedAudit, AnswerData, ExtinguisherArea, Extinguisher, InspectionRecord, InspectionAnswers, FirstAidKitArea, FirstAidKit } from '../types';
+import { CompletedAudit, AnswerData, FirstAidKitArea, FirstAidKit } from '../types';
+import { generateFileName, getImageDimensions, base64ToUint8Array, fetchImageAsBase64 } from './reportUtils';
 
-const base64ToUint8Array = (base64: string): Uint8Array => {
-    const binaryString = atob(base64.replace(/^data:image\/[a-z]+;base64,/, ''));
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
-};
-
-const getImageDimensions = (base64: string): Promise<{ width: number, height: number }> => {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve({ width: img.width, height: img.height });
-        img.onerror = (err) => reject(`Could not load image from base64: ${err}`);
-        img.src = base64;
-    });
-};
 
 type ReportStats = { averageCompliance: number, lowestComplianceArea: string };
 
@@ -35,25 +17,21 @@ type ReportRow = {
   pregunta: string;
   respuesta: string | null;
   observacion?: string;
-  photo?: string;
+  photo?: string; // URL
+  photoBase64?: string; // Populated for reporting
 };
 type QuestionAnalysisData = {
     question: string;
     stats: { area: string; counts: { 'Sí': number; 'No': number; 'N/A': number } }[];
 }[];
 
-const generateFileName = (prefix: string, extension: string) => {
-    return `${prefix}_${new Date().toISOString().split('T')[0]}.${extension}`;
-}
-
-const prepareReportData = (audits: CompletedAudit[], questions: string[]) => {
-  const allRowsForReporting: ReportRow[] = [];
+const prepareReportData = async (audits: CompletedAudit[], questions: string[]) => {
+  let allRowsForReporting: ReportRow[] = [];
   const questionAnalysisStats: { [questionIndex: number]: { [area: string]: { 'Sí': number; 'No': number; 'N/A': number } } } = {};
 
   for (const audit of audits) {
     const { area, fecha, nombreAuditor } = audit.auditData;
 
-    // FIX: Explicitly type the destructured 'answerData' object to ensure correct property access.
     Object.entries(audit.answers).forEach(([indexStr, answerData]: [string, AnswerData]) => {
       const index = parseInt(indexStr, 10);
       const questionText = questions[index] || `Pregunta ${index + 1} no encontrada`;
@@ -76,6 +54,19 @@ const prepareReportData = (audits: CompletedAudit[], questions: string[]) => {
       });
     });
   }
+  
+  // Fetch all photos in parallel
+  const photoPromises = allRowsForReporting.map(row => {
+    if (row.photo) {
+        return fetchImageAsBase64(row.photo).then(base64 => {
+            row.photoBase64 = base64;
+        }).catch(e => {
+            console.error(`Failed to fetch image for report: ${row.photo}`, e);
+        });
+    }
+    return Promise.resolve();
+  });
+  await Promise.all(photoPromises);
 
   const questionAnalysisData: QuestionAnalysisData = questions.map((questionText, index) => {
     const statsForQuestion = questionAnalysisStats[index] || {};
@@ -109,20 +100,18 @@ export const generatePdfReport = async (
   doc.text(`Cumplimiento Promedio: ${stats.averageCompliance.toFixed(1)}%`, 15, 55);
   doc.text(`Área con Menor Cumplimiento: ${stats.lowestComplianceArea}`, 15, 62);
 
-  // Add Area Chart with correct aspect ratio
   const areaChartDims = await getImageDimensions(areaChartImg);
   const areaChartHeight = maxWidth * (areaChartDims.height / areaChartDims.width);
   doc.text("Cumplimiento por Área", pdfPageWidth / 2, 78, { align: 'center' });
   doc.addImage(areaChartImg, 'PNG', margin, 80, maxWidth, areaChartHeight);
   
-  // Add History Chart on a new page
   doc.addPage();
   const historyChartDims = await getImageDimensions(historyChartImg);
   const historyChartHeight = maxWidth * (historyChartDims.height / historyChartDims.width);
   doc.text("Histórico de Cumplimiento", pdfPageWidth / 2, 25, { align: 'center' });
   doc.addImage(historyChartImg, 'PNG', margin, 30, maxWidth, historyChartHeight);
 
-  const { allRowsForReporting } = prepareReportData(audits, questions);
+  const { allRowsForReporting } = await prepareReportData(audits, questions);
 
   const auditsByArea = allRowsForReporting.reduce((acc, row) => {
     (acc[row.area] = acc[row.area] || []).push(row);
@@ -159,7 +148,7 @@ export const generatePdfReport = async (
     });
     finalY = (doc as any).lastAutoTable.finalY + 5;
     
-    const rowsWithPhotos = areaRows.filter(r => r.photo);
+    const rowsWithPhotos = areaRows.filter(r => r.photoBase64);
     if(rowsWithPhotos.length > 0) {
         if (finalY > 250) { doc.addPage(); finalY = 20; }
         doc.setFontSize(12);
@@ -172,18 +161,18 @@ export const generatePdfReport = async (
              doc.text(`- Pregunta #${row.qNum}: ${row.pregunta}`, 15, finalY, { maxWidth: maxWidth });
              finalY += 5;
              try {
-                const photoDims = await getImageDimensions(row.photo!);
-                const photoWidth = 80; // A larger width for better clarity
+                const photoDims = await getImageDimensions(row.photoBase64!);
+                const photoWidth = 80;
                 const photoHeight = photoWidth * (photoDims.height / photoDims.width);
                 if (finalY + photoHeight > 280) { doc.addPage(); finalY = 20; }
-                doc.addImage(row.photo!, 'JPEG', 20, finalY + 2, photoWidth, photoHeight, undefined, 'NONE');
+                doc.addImage(row.photoBase64!, 'JPEG', 20, finalY + 2, photoWidth, photoHeight, undefined, 'NONE');
                 finalY += photoHeight + 8;
              } catch(e) { console.error("Error adding image to PDF:", e) }
         }
     }
   }
 
-  const { questionAnalysisData } = prepareReportData(audits, questions);
+  const { questionAnalysisData } = await prepareReportData(audits, questions);
   doc.addPage();
   doc.setFontSize(16);
   doc.text("Análisis por Pregunta", pdfPageWidth / 2, 25, { align: 'center' });
@@ -250,10 +239,10 @@ export const generateXlsxReport = async (
     { header: 'Área', key: 'area', width: 20 }, { header: 'Fecha', key: 'fecha', width: 15 },
     { header: 'Auditor', key: 'auditor', width: 25 }, { header: 'N° Pregunta', key: 'qNum', width: 15 },
     { header: 'Pregunta', key: 'pregunta', width: 70 }, { header: 'Respuesta', key: 'respuesta', width: 15 },
-    { header: 'Observación', key: 'observacion', width: 50 }, { header: 'Tiene Foto', key: 'photo', width: 15 },
+    { header: 'Observación', key: 'observacion', width: 50 }, { header: 'URL Foto', key: 'photo', width: 50 },
   ];
-  const { allRowsForReporting } = prepareReportData(audits, questions);
-  allRowsForReporting.forEach(row => { dataSheet.addRow({ ...row, photo: row.photo ? 'Sí' : 'No' }); });
+  const { allRowsForReporting } = await prepareReportData(audits, questions);
+  allRowsForReporting.forEach(row => { dataSheet.addRow({ ...row }); });
 
   const photoSheet = workbook.addWorksheet('Evidencia Fotográfica');
   photoSheet.columns = [
@@ -262,21 +251,20 @@ export const generateXlsxReport = async (
     { header: 'Pregunta', key: 'pregunta', width: 70 },
   ];
   let photoSheetRow = 2;
-  const photos = allRowsForReporting.filter(row => row.photo);
+  const photos = allRowsForReporting.filter(row => row.photoBase64);
   for (const row of photos) {
     photoSheet.addRow({ area: row.area, qNum: row.qNum, pregunta: row.pregunta });
-    const photoDims = await getImageDimensions(row.photo!);
+    const photoDims = await getImageDimensions(row.photoBase64!);
     const photoWidth = 250;
     const photoHeight = photoWidth * (photoDims.height / photoDims.width);
-    const imageId = workbook.addImage({ base64: row.photo!, extension: 'png' });
+    const imageId = workbook.addImage({ base64: row.photoBase64!, extension: 'png' });
     photoSheet.addImage(imageId, {
         tl: { col: 3, row: photoSheetRow - 1 },
         ext: { width: photoWidth, height: photoHeight }
     });
-    photoSheet.getRow(photoSheetRow).height = photoHeight * 0.75; // Set row height (points)
+    photoSheet.getRow(photoSheetRow).height = photoHeight * 0.75;
     photoSheetRow++;
   }
-
 
   const questionSheet = workbook.addWorksheet('Análisis por Pregunta');
   let currentRow = 1;
@@ -293,7 +281,7 @@ export const generateXlsxReport = async (
         const qChartHeight = xlsxQuestionChartWidth * (qChartDims.height / qChartDims.width);
         const imageId = workbook.addImage({ base64: imgBase64, extension: 'png' });
         questionSheet.addImage(imageId, { tl: { col: 0, row: currentRow }, ext: { width: xlsxQuestionChartWidth, height: qChartHeight } });
-        currentRow += Math.ceil(qChartHeight * 0.05) + 1; // Approximate row height calculation
+        currentRow += Math.ceil(qChartHeight * 0.05) + 1;
     }
   }
 
@@ -316,6 +304,8 @@ export const generateDocxReport = async (
 
     const historyChartDims = await getImageDimensions(historyChartImg);
     const historyChartHeight = docxMaxWidth * (historyChartDims.height / historyChartDims.width);
+    
+    const { allRowsForReporting, questionAnalysisData } = await prepareReportData(audits, questions);
 
     const docChildren = [
         new Paragraph({ text: "Reporte de Auditorías 5S", heading: "Title", alignment: AlignmentType.CENTER }),
@@ -329,7 +319,6 @@ export const generateDocxReport = async (
         new Paragraph({ children: [ new ImageRun({ data: base64ToUint8Array(historyChartImg), transformation: { width: docxMaxWidth, height: historyChartHeight } }) ], alignment: AlignmentType.CENTER }),
     ];
 
-    const { allRowsForReporting, questionAnalysisData } = prepareReportData(audits, questions);
     docChildren.push(new Paragraph({ text: "Detalle de Auditorías", pageBreakBefore: true, heading: "Heading1" }));
     const auditsByArea = allRowsForReporting.reduce((acc, row) => {
         (acc[row.area] = acc[row.area] || []).push(row);
@@ -353,13 +342,13 @@ export const generateDocxReport = async (
                     new TableCell({ children: [new Paragraph(row.observacion || '')] }),
                 ]
             }));
-            if (row.photo) {
-                 const photoDims = await getImageDimensions(row.photo);
+            if (row.photoBase64) {
+                 const photoDims = await getImageDimensions(row.photoBase64);
                  const photoWidth = 200;
                  const photoHeight = photoWidth * (photoDims.height / photoDims.width);
                 tableRows.push(new TableRow({
                     children: [ new TableCell({ columnSpan: 4, children: [
-                        new Paragraph({ children: [ new ImageRun({ data: base64ToUint8Array(row.photo), transformation: { width: photoWidth, height: photoHeight } }) ], alignment: AlignmentType.CENTER })
+                        new Paragraph({ children: [ new ImageRun({ data: base64ToUint8Array(row.photoBase64), transformation: { width: photoWidth, height: photoHeight } }) ], alignment: AlignmentType.CENTER })
                     ]})]
                 }));
             }
@@ -389,214 +378,6 @@ export const generateDocxReport = async (
     saveAs(buffer, generateFileName('Reporte_Auditorias_5S', 'docx'));
 };
 
-// --- Reporte de Extintores ---
-
-const inspectionQuestions = [
-  "¿El extintor cuenta con presión?",
-  "¿El extintor cuenta con manguera, boquilla y cono?",
-  "¿El extintor cuenta con manómetro?",
-  "¿El extintor se encuentra en buen estado?",
-  "¿La señalización se encuentra visible?",
-  "¿El extintor cuenta con su sello y pasador de seguridad?",
-  "¿El extintor se encuentra libre de obstáculos?"
-];
-
-export const generateExtinguisherReportPdf = async (
-  areas: ExtinguisherArea[],
-  extinguishers: Extinguisher[],
-  inspections: InspectionRecord[]
-) => {
-  const doc = new jsPDF();
-  const pdfPageWidth = doc.internal.pageSize.getWidth();
-  let finalY = 25;
-
-  const inspectedExtinguisherIds = new Set(inspections.map(i => i.extinguisher_id));
-  const inspectionsMap = new Map(inspections.map(i => [i.extinguisher_id, i]));
-
-  // --- Página de Título y Resumen ---
-  doc.setFontSize(22);
-  doc.text("Reporte de Extintores", pdfPageWidth / 2, finalY, { align: 'center' });
-  finalY += 20;
-  doc.setFontSize(16);
-  doc.text("Resumen General", 15, finalY);
-  finalY += 10;
-  doc.setFontSize(12);
-  doc.text(`Total de Áreas: ${areas.length}`, 15, finalY);
-  doc.text(`Total de Extintores: ${extinguishers.length}`, 80, finalY);
-  doc.text(`Total de Inspecciones: ${inspections.length}`, 150, finalY);
-  finalY += 15;
-
-  // --- Detalle por Área ---
-  for (const area of areas) {
-    const extinguishersInArea = extinguishers.filter(e => e.area_id === area.id);
-    if (extinguishersInArea.length === 0) continue;
-
-    if (finalY > 250) {
-      doc.addPage();
-      finalY = 20;
-    }
-
-    doc.setFontSize(14);
-    doc.text(`Área: ${area.name}`, 15, finalY);
-    finalY += 8;
-
-    const headExtinguishers = [['Ubicación', 'Serie', 'Tipo', 'Capacidad', 'Estado']];
-    const bodyExtinguishers = extinguishersInArea.map(ext => [
-      ext.location,
-      ext.series || 'N/A',
-      ext.type,
-      ext.capacity,
-      inspectedExtinguisherIds.has(ext.id) ? 'Inspeccionado' : 'Pendiente'
-    ]);
-
-    (doc as any).autoTable({
-      head: headExtinguishers,
-      body: bodyExtinguishers,
-      startY: finalY,
-      theme: 'grid',
-      headStyles: { fillColor: [41, 128, 185] }, // Azul
-      didDrawPage: (data: any) => { finalY = data.cursor.y; }
-    });
-    finalY = (doc as any).lastAutoTable.finalY + 10;
-    
-    // --- Detalle de Inspecciones por Extintor ---
-    const inspectedInArea = extinguishersInArea.filter(e => inspectedExtinguisherIds.has(e.id));
-    
-    if (inspectedInArea.length > 0) {
-       if (finalY > 250) {
-        doc.addPage();
-        finalY = 20;
-       }
-       doc.setFontSize(12);
-       doc.text(`Resultados de Inspecciones en ${area.name}`, 15, finalY);
-       finalY += 8;
-    }
-
-    for (const ext of inspectedInArea) {
-      const inspection = inspectionsMap.get(ext.id);
-      if (!inspection) continue;
-
-      if (finalY > 250) {
-        doc.addPage();
-        finalY = 20;
-      }
-
-      doc.setFontSize(10);
-      doc.text(`Inspección para: ${ext.location} (Serie: ${ext.series || 'N/A'})`, 15, finalY, { textColor: 'gray' });
-      finalY += 6;
-
-      const headInspection = [['Pregunta', 'Respuesta', 'Observación', 'Foto']];
-      const bodyInspection = inspectionQuestions.map((q, index) => {
-        const answerData = inspection.answers[index];
-        return [
-          doc.splitTextToSize(q, 70),
-          answerData?.answer || 'N/A',
-          doc.splitTextToSize(answerData?.observation || '', 60),
-          answerData?.photo ? 'Sí' : 'No'
-        ];
-      });
-
-      (doc as any).autoTable({
-        head: headInspection,
-        body: bodyInspection,
-        startY: finalY,
-        theme: 'striped',
-        headStyles: { fillColor: [80, 80, 80] }, // Gris oscuro
-        didDrawPage: (data: any) => { finalY = data.cursor.y; }
-      });
-      finalY = (doc as any).lastAutoTable.finalY + 8;
-    }
-  }
-
-  doc.save(generateFileName('Reporte_Extintores', 'pdf'));
-};
-
-export const generateExtinguisherReportXlsx = async (
-  areas: ExtinguisherArea[],
-  extinguishers: Extinguisher[],
-  inspections: InspectionRecord[]
-) => {
-  const workbook = new Excel.Workbook();
-  workbook.creator = 'AuditApp';
-  workbook.created = new Date();
-
-  const inspectedExtinguisherIds = new Set(inspections.map(i => i.extinguisher_id));
-  const inspectionsMap = new Map(inspections.map(i => [i.extinguisher_id, i]));
-  const areaMap = new Map(areas.map(a => [a.id, a.name]));
-
-  // --- Hoja de Resumen ---
-  const summarySheet = workbook.addWorksheet('Resumen');
-  summarySheet.mergeCells('A1:B1');
-  summarySheet.getCell('A1').value = 'Reporte de Extintores';
-  summarySheet.getCell('A1').font = { size: 18, bold: true };
-  summarySheet.getCell('A3').value = 'Total de Áreas';
-  summarySheet.getCell('B3').value = areas.length;
-  summarySheet.getCell('A4').value = 'Total de Extintores';
-  summarySheet.getCell('B4').value = extinguishers.length;
-  summarySheet.getCell('A5').value = 'Total de Inspecciones';
-  summarySheet.getCell('B5').value = inspections.length;
-  summarySheet.getCell('A3').font = { bold: true };
-  summarySheet.getCell('A4').font = { bold: true };
-  summarySheet.getCell('A5').font = { bold: true };
-
-  // --- Hoja de Detalle de Extintores ---
-  const detailSheet = workbook.addWorksheet('Detalle Extintores');
-  detailSheet.columns = [
-    { header: 'Área', key: 'area', width: 30 },
-    { header: 'Ubicación', key: 'location', width: 30 },
-    { header: 'Serie', key: 'series', width: 20 },
-    { header: 'Tipo', key: 'type', width: 15 },
-    { header: 'Capacidad', key: 'capacity', width: 15 },
-    { header: 'Estado', key: 'status', width: 20 },
-  ];
-  extinguishers.forEach(ext => {
-    detailSheet.addRow({
-      area: areaMap.get(ext.area_id) || 'Desconocida',
-      location: ext.location,
-      series: ext.series || 'N/A',
-      type: ext.type,
-      capacity: ext.capacity,
-      status: inspectedExtinguisherIds.has(ext.id) ? 'Inspeccionado' : 'Pendiente'
-    });
-  });
-
-  // --- Hoja de Resultados de Inspecciones ---
-  const inspectionSheet = workbook.addWorksheet('Resultados Inspecciones');
-  inspectionSheet.columns = [
-    { header: 'Área', key: 'area', width: 30 },
-    { header: 'Ubicación Extintor', key: 'location', width: 30 },
-    { header: 'Serie Extintor', key: 'series', width: 20 },
-    { header: 'N° Pregunta', key: 'qNum', width: 15 },
-    { header: 'Pregunta', key: 'question', width: 60 },
-    { header: 'Respuesta', key: 'answer', width: 15 },
-    { header: 'Observación', key: 'observation', width: 50 },
-    { header: 'Tiene Foto', key: 'photo', width: 15 },
-  ];
-  extinguishers.forEach(ext => {
-    if (inspectedExtinguisherIds.has(ext.id)) {
-      const inspection = inspectionsMap.get(ext.id);
-      if (inspection) {
-        inspectionQuestions.forEach((q, index) => {
-          const answerData = inspection.answers[index];
-          inspectionSheet.addRow({
-            area: areaMap.get(ext.area_id) || 'Desconocida',
-            location: ext.location,
-            series: ext.series || 'N/A',
-            qNum: index + 1,
-            question: q,
-            answer: answerData?.answer || 'N/A',
-            observation: answerData?.observation || '',
-            photo: answerData?.photo ? 'Sí' : 'No'
-          });
-        });
-      }
-    }
-  });
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  saveAs(new Blob([buffer]), generateFileName('Reporte_Extintores', 'xlsx'));
-};
-
 
 // --- Reporte de Botiquines ---
 
@@ -618,7 +399,6 @@ export const generateFirstAidKitReportPdf = async (
   const maxWidth = pdfPageWidth - margin * 2;
   let finalY = 25;
 
-  // --- Página de Título y Resumen ---
   doc.setFontSize(22);
   doc.text("Reporte de Botiquines", pdfPageWidth / 2, finalY, { align: 'center' });
   finalY += 20;
@@ -630,7 +410,6 @@ export const generateFirstAidKitReportPdf = async (
   doc.text(`Total de Botiquines Registrados: ${kits.length}`, 80, finalY);
   finalY += 15;
 
-  // --- Detalle por Área ---
   for (const area of areas) {
     const kitsInArea = kits.filter(k => k.area_id === area.id);
     if (kitsInArea.length === 0) continue;
@@ -674,10 +453,17 @@ export const generateFirstAidKitReportPdf = async (
       });
       finalY = (doc as any).lastAutoTable.finalY + 8;
 
-      // --- Sección de Evidencia Fotográfica ---
-      const photosForKit = firstAidKitQuestions
-        .map((q, index) => ({ q, answer: kit.inspection_data[index] }))
-        .filter(item => item.answer?.photo);
+      const photosForKit = await Promise.all(firstAidKitQuestions
+        .map(async (q, index) => {
+            const answer = kit.inspection_data[index];
+            if (answer?.photo) {
+                const photoBase64 = await fetchImageAsBase64(answer.photo).catch(() => null);
+                return { q, photoBase64 };
+            }
+            return null;
+        })
+      ).then(results => results.filter(Boolean) as { q: string; photoBase64: string }[]);
+
 
       if (photosForKit.length > 0) {
         if (finalY > 250) { doc.addPage(); finalY = 20; }
@@ -691,12 +477,11 @@ export const generateFirstAidKitReportPdf = async (
           doc.text(`- Pregunta: ${item.q}`, 15, finalY, { maxWidth: maxWidth });
           finalY += 4;
           try {
-            const photo = item.answer.photo!;
-            const photoDims = await getImageDimensions(photo);
+            const photoDims = await getImageDimensions(item.photoBase64);
             const photoWidth = 70;
             const photoHeight = photoWidth * (photoDims.height / photoDims.width);
             if (finalY + photoHeight > 280) { doc.addPage(); finalY = 20; }
-            doc.addImage(photo, 'JPEG', 20, finalY + 2, photoWidth, photoHeight, undefined, 'NONE');
+            doc.addImage(item.photoBase64, 'JPEG', 20, finalY + 2, photoWidth, photoHeight, undefined, 'NONE');
             finalY += photoHeight + 8;
           } catch(e) { console.error("Error adding image to PDF:", e) }
         }
@@ -717,7 +502,6 @@ export const generateFirstAidKitReportXlsx = async (
   
   const areaMap = new Map(areas.map(a => [a.id, a.name]));
 
-  // --- Hoja de Resumen ---
   const summarySheet = workbook.addWorksheet('Resumen');
   summarySheet.mergeCells('A1:B1');
   summarySheet.getCell('A1').value = 'Reporte de Botiquines';
@@ -729,7 +513,6 @@ export const generateFirstAidKitReportXlsx = async (
   summarySheet.getCell('A3').font = { bold: true };
   summarySheet.getCell('A4').font = { bold: true };
 
-  // --- Hoja de Detalle de Botiquines ---
   const detailSheet = workbook.addWorksheet('Detalle Botiquines');
   detailSheet.columns = [
     { header: 'Área', key: 'area', width: 30 },
@@ -744,7 +527,6 @@ export const generateFirstAidKitReportXlsx = async (
     });
   });
 
-  // --- Hoja de Resultados de Inspección de Registro ---
   const inspectionSheet = workbook.addWorksheet('Resultados Inspección');
   inspectionSheet.columns = [
     { header: 'Área', key: 'area', width: 30 },
@@ -753,7 +535,7 @@ export const generateFirstAidKitReportXlsx = async (
     { header: 'Pregunta', key: 'question', width: 60 },
     { header: 'Respuesta', key: 'answer', width: 15 },
     { header: 'Observación', key: 'observation', width: 50 },
-    { header: 'Tiene Foto', key: 'photo', width: 15 },
+    { header: 'URL Foto', key: 'photo', width: 50 },
   ];
   kits.forEach(kit => {
     firstAidKitQuestions.forEach((q, index) => {
@@ -765,12 +547,11 @@ export const generateFirstAidKitReportXlsx = async (
         question: q,
         answer: answerData?.answer || 'N/A',
         observation: answerData?.observation || '',
-        photo: answerData?.photo ? 'Sí' : 'No'
+        photo: answerData?.photo || 'No'
       });
     });
   });
   
-  // --- Hoja de Evidencia Fotográfica ---
   const photoSheet = workbook.addWorksheet('Evidencia Fotográfica');
   photoSheet.columns = [
     { header: 'Área', key: 'area', width: 30 },
@@ -790,23 +571,26 @@ export const generateFirstAidKitReportXlsx = async (
           qNum: i + 1,
           question: firstAidKitQuestions[i]
         });
+        
+        try {
+            const photoBase64 = await fetchImageAsBase64(answerData.photo);
+            const photoDims = await getImageDimensions(photoBase64);
+            const photoWidth = 200;
+            const photoHeight = photoWidth * (photoDims.height / photoDims.width);
+            const imageId = workbook.addImage({ base64: photoBase64, extension: 'png' });
+            
+            photoSheet.addImage(imageId, {
+              tl: { col: 4, row: photoSheetRow - 1 },
+              ext: { width: photoWidth, height: photoHeight }
+            });
+            
+            photoSheet.getRow(photoSheetRow).height = photoHeight * 0.75;
+        } catch(e) { console.error("Could not add image to XLSX", e); }
 
-        const photoDims = await getImageDimensions(answerData.photo);
-        const photoWidth = 200;
-        const photoHeight = photoWidth * (photoDims.height / photoDims.width);
-        const imageId = workbook.addImage({ base64: answerData.photo, extension: 'png' });
-        
-        photoSheet.addImage(imageId, {
-          tl: { col: 4, row: photoSheetRow - 1 },
-          ext: { width: photoWidth, height: photoHeight }
-        });
-        
-        photoSheet.getRow(photoSheetRow).height = photoHeight * 0.75;
         photoSheetRow++;
       }
     }
   }
-
 
   const buffer = await workbook.xlsx.writeBuffer();
   saveAs(new Blob([buffer]), generateFileName('Reporte_Botiquines', 'xlsx'));

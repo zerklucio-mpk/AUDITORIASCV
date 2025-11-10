@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { FirstAidKitArea, FirstAidKit, FirstAidKitAnswers, FirstAidKitAnswer } from '../types';
-import { getFirstAidKitAreas, addFirstAidKitArea, deleteFirstAidKitArea, getFirstAidKits, addFirstAidKit, deleteFirstAidKit, deleteAllFirstAidKits } from '../services/supabaseClient';
+import { 
+  addFirstAidKitArea, 
+  deleteFirstAidKitArea, 
+  addFirstAidKit, 
+  deleteFirstAidKit, 
+  deleteAllFirstAidKits,
+  uploadPhoto
+} from '../services/supabaseClient';
 import { generateFirstAidKitReportPdf, generateFirstAidKitReportXlsx } from '../services/reportService';
 import SpinnerIcon from './icons/SpinnerIcon';
 import Dropdown from './Dropdown';
@@ -18,12 +25,14 @@ const inspectionQuestions = [
   "¿Cuenta con checklist?"
 ];
 
-const FirstAidKitsScreen: React.FC = () => {
+interface Props {
+  areas: FirstAidKitArea[];
+  allKits: FirstAidKit[];
+  refreshData: () => Promise<void>;
+}
+
+const FirstAidKitsScreen: React.FC<Props> = ({ areas, allKits, refreshData }) => {
   const [newArea, setNewArea] = useState('');
-  const [areas, setAreas] = useState<FirstAidKitArea[]>([]);
-  const [allKits, setAllKits] = useState<FirstAidKit[]>([]);
-  
-  const [isLoading, setIsLoading] = useState(true);
   const [isAddingArea, setIsAddingArea] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
@@ -49,29 +58,16 @@ const FirstAidKitsScreen: React.FC = () => {
   const [isResetting, setIsResetting] = useState(false);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
+  
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState<number | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
-
-  const fetchData = useCallback(async () => {
-    try {
-      setError(null);
-      setIsLoading(true);
-      const [fetchedAreas, fetchedKits] = await Promise.all([
-        getFirstAidKitAreas(),
-        getFirstAidKits()
-      ]);
-      setAreas(fetchedAreas);
-      setAllKits(fetchedKits);
-    } catch (e: any) {
-      setError('No se pudieron cargar los datos. Revisa si ejecutaste el código SQL y la configuración de Supabase.');
-      console.error(e);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (selectedAreaId && !areas.some(a => a.id === selectedAreaId)) {
+      setSelectedAreaId(null);
+    }
+  }, [areas, selectedAreaId]);
 
   const handleAddArea = async () => {
     const trimmedArea = newArea.trim();
@@ -85,7 +81,7 @@ const FirstAidKitsScreen: React.FC = () => {
     try {
       await addFirstAidKitArea(trimmedArea);
       setNewArea('');
-      await fetchData();
+      await refreshData();
     } catch (e: any) {
       setError('No se pudo añadir el área.');
       console.error(e);
@@ -107,10 +103,7 @@ const FirstAidKitsScreen: React.FC = () => {
     setDeleteAreaError(null);
     try {
       await deleteFirstAidKitArea(areaToDelete.id);
-      if (selectedAreaId === areaToDelete.id) {
-        setSelectedAreaId(null);
-      }
-      await fetchData();
+      await refreshData();
       setAreaToDelete(null);
     } catch (e: any) {
       setDeleteAreaError(e.message || "Ocurrió un error inesperado al eliminar el área.");
@@ -163,7 +156,7 @@ const FirstAidKitsScreen: React.FC = () => {
         location: kitLocation,
         inspection_data: kitAnswers
       });
-      await fetchData();
+      await refreshData();
       setIsRegistering(false);
       resetForm();
     } catch (e: any) {
@@ -186,7 +179,7 @@ const FirstAidKitsScreen: React.FC = () => {
     setDeleteError(null);
     try {
         await deleteFirstAidKit(kitToDelete.id);
-        await fetchData();
+        await refreshData();
         setKitToDelete(null); // Close modal on success
     } catch (e: any) {
         setDeleteError(e.message || "Ocurrió un error inesperado durante la eliminación.");
@@ -206,7 +199,7 @@ const FirstAidKitsScreen: React.FC = () => {
     setResetError(null);
     try {
       await deleteAllFirstAidKits();
-      await fetchData();
+      await refreshData();
       setIsResetConfirming(false);
     } catch (e: any) {
       setResetError(e.message || "Ocurrió un error inesperado durante el reinicio.");
@@ -225,14 +218,21 @@ const FirstAidKitsScreen: React.FC = () => {
     setKitAnswers(prev => ({ ...prev, [qIndex]: { ...prev[qIndex], answer: prev[qIndex]?.answer || null, observation } }));
   };
 
-  const handlePhotoChange = (qIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (qIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setKitAnswers(prev => ({ ...prev, [qIndex]: { ...prev[qIndex], answer: prev[qIndex]?.answer || null, photo: reader.result as string } }));
-    };
-    reader.readAsDataURL(file);
+    
+    setIsUploadingPhoto(qIndex);
+    setUploadError(null);
+    try {
+      const photoUrl = await uploadPhoto(file);
+      setKitAnswers(prev => ({ ...prev, [qIndex]: { ...prev[qIndex], answer: prev[qIndex]?.answer || null, photo: photoUrl } }));
+    } catch (error) {
+        console.error("Error uploading photo:", error);
+        setUploadError("No se pudo subir la foto.");
+    } finally {
+        setIsUploadingPhoto(null);
+    }
     e.target.value = '';
   };
   
@@ -252,7 +252,6 @@ const FirstAidKitsScreen: React.FC = () => {
 
 
   const renderAreaList = () => {
-    if (isLoading) return <div className="flex items-center justify-center h-full"><SpinnerIcon className="h-8 w-8 animate-spin text-indigo-400" /></div>;
     if (areas.length === 0 && !error) return <div className="flex items-center justify-center h-full text-center text-slate-500"><p>No hay áreas. Usa el formulario de abajo para empezar.</p></div>;
     return (
       <ul className="space-y-2">
@@ -285,6 +284,9 @@ const FirstAidKitsScreen: React.FC = () => {
             <label htmlFor="location" className="block text-sm font-medium leading-6 text-slate-300">Ubicación del Botiquín</label>
             <input type="text" name="location" id="location" value={kitLocation} onChange={(e) => setKitLocation(e.target.value)} className="mt-1 block w-full rounded-md border-0 py-2 px-3 bg-slate-800 text-white shadow-sm ring-1 ring-inset ring-slate-700 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm" placeholder="Ej. Pared junto a recepción"/>
         </div>
+        
+        {uploadError && <div className="text-center text-red-400 bg-red-900/20 p-2 rounded-md text-sm">{uploadError}</div>}
+
         <div className="space-y-4 pt-4 border-t border-slate-700">
           {inspectionQuestions.map((q, index) => (
              <div key={index} className="bg-slate-800/50 p-3 rounded-lg">
@@ -300,9 +302,9 @@ const FirstAidKitsScreen: React.FC = () => {
                         ))}
                     </div>
                     <textarea value={kitAnswers[index]?.observation || ''} onChange={(e) => handleObservationChange(index, e.target.value)} placeholder="Observación..." className="block w-full rounded-md border-0 py-1.5 px-2 bg-slate-700 text-white shadow-sm ring-1 ring-inset ring-slate-600 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-500 text-sm" rows={1}></textarea>
-                    <label className="flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 w-full sm:w-auto bg-blue-600 text-white hover:bg-blue-500 cursor-pointer">
-                        <CameraIcon className="h-4 w-4" />
-                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handlePhotoChange(index, e)} />
+                    <label className="relative flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 w-full sm:w-auto bg-blue-600 text-white hover:bg-blue-500 cursor-pointer">
+                        {isUploadingPhoto === index ? <SpinnerIcon className="h-4 w-4 animate-spin"/> : <CameraIcon className="h-4 w-4" />}
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handlePhotoChange(index, e)} disabled={isUploadingPhoto !== null} />
                     </label>
                 </div>
                  {kitAnswers[index]?.photo && (
@@ -413,8 +415,7 @@ const FirstAidKitsScreen: React.FC = () => {
                 {isRegistering ? renderRegistrationForm() : 
                  viewingKit ? renderKitDetails() : (
                   <div className="space-y-3 mt-4">
-                    {isLoading ? <div className="flex items-center justify-center py-8"><SpinnerIcon className="h-8 w-8 animate-spin text-indigo-400" /></div> : 
-                     currentKits.length === 0 ? <p className="text-slate-500 text-center py-8">No hay botiquines registrados.</p> :
+                    {currentKits.length === 0 ? <p className="text-slate-500 text-center py-8">No hay botiquines registrados.</p> :
                       (currentKits.map(kit => (
                         <div key={kit.id} className="bg-slate-800/50 p-3 rounded-md text-sm flex justify-between items-center">
                             <div>

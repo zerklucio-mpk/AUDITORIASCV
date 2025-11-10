@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Extinguisher, InspectionAnswers, InspectionAnswer } from '../types';
+import { uploadPhoto } from '../services/supabaseClient';
 import ArrowLeftIcon from './icons/ArrowLeftIcon';
 import CheckCircleIcon from './icons/CheckCircleIcon';
 import CameraIcon from './icons/CameraIcon';
@@ -31,6 +32,8 @@ const InspectionScreen: React.FC<Props> = ({ extinguisher, onBack, onSave }) => 
   const [editableDetails, setEditableDetails] = useState(extinguisher);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState<number | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const handleDetailChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -51,18 +54,24 @@ const InspectionScreen: React.FC<Props> = ({ extinguisher, onBack, onSave }) => 
     }));
   };
 
-  const handlePhotoChange = (questionIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (questionIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
+      setIsUploadingPhoto(questionIndex);
+      setUploadError(null);
+      try {
+          const photoUrl = await uploadPhoto(file);
           setAnswers(prev => ({
               ...prev,
-              [questionIndex]: { ...prev[questionIndex], answer: prev[questionIndex]?.answer || null, photo: reader.result as string },
+              [questionIndex]: { ...prev[questionIndex], answer: prev[questionIndex]?.answer || null, photo: photoUrl },
           }));
-      };
-      reader.readAsDataURL(file);
+      } catch (error) {
+          console.error("Error uploading photo:", error);
+          setUploadError("No se pudo subir la foto. Inténtalo de nuevo.");
+      } finally {
+          setIsUploadingPhoto(null);
+      }
       e.target.value = '';
   };
 
@@ -128,6 +137,8 @@ const InspectionScreen: React.FC<Props> = ({ extinguisher, onBack, onSave }) => 
             </div>
         </div>
       </div>
+
+      {uploadError && <div className="mb-4 text-center text-red-400 bg-red-900/20 p-3 rounded-md">{uploadError}</div>}
       
       <div className="space-y-6">
         {inspectionQuestions.map((question, index) => (
@@ -156,14 +167,15 @@ const InspectionScreen: React.FC<Props> = ({ extinguisher, onBack, onSave }) => 
                     className="block w-full rounded-md border-0 py-2 px-3 bg-slate-800 text-white shadow-sm ring-1 ring-inset ring-slate-700 placeholder:text-slate-500 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm sm:leading-6 transition-colors duration-200 flex-1"
                     rows={1}
                 ></textarea>
-                <label className="flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 w-full sm:w-auto bg-blue-600 text-white hover:bg-blue-500 cursor-pointer">
-                    <CameraIcon className="h-5 w-5" />
+                <label className="relative flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 w-full sm:w-auto bg-blue-600 text-white hover:bg-blue-500 cursor-pointer">
+                    {isUploadingPhoto === index ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : <CameraIcon className="h-5 w-5" />}
                     <input
                         type="file"
                         accept="image/*"
                         capture="environment"
                         className="hidden"
                         onChange={(e) => handlePhotoChange(index, e)}
+                        disabled={isUploadingPhoto !== null}
                     />
                 </label>
             </div>

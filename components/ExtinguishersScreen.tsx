@@ -1,18 +1,17 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ExtinguisherArea, Extinguisher, InspectionAnswers, InspectionRecord } from '../types';
 import { 
-  getExtinguisherAreas, 
   addExtinguisherArea, 
   deleteExtinguisherArea,
-  getAllExtinguishers, 
   addExtinguisher, 
   deleteExtinguisher, 
   updateExtinguisher,
   addInspection,
+  deleteAllInspections,
   getExtinguisherInspections,
-  deleteAllInspections
+  getInspectionByExtinguisherId
 } from '../services/supabaseClient';
-import { generateExtinguisherReportPdf, generateExtinguisherReportXlsx } from '../services/reportService';
+import { generateExtinguisherReportPdf, generateExtinguisherReportXlsx } from '../services/extinguisherReportService';
 import SpinnerIcon from './icons/SpinnerIcon';
 import ChevronDownIcon from './icons/ChevronDownIcon';
 import TrashIcon from './icons/TrashIcon';
@@ -22,15 +21,26 @@ import Dropdown from './Dropdown';
 
 const extinguisherTypes = ['PQS', 'AGUA', 'Co2', 'HFC-236-FA'];
 const extinguisherCapacities = ['2kg', '2.5kg', '4.5kg', '6kg', '50kg'];
+const inspectionQuestions = [
+  "¿El extintor cuenta con presión?",
+  "¿El extintor cuenta con manguera, boquilla y cono?",
+  "¿El extintor cuenta con manómetro?",
+  "¿El extintor se encuentra en buen estado?",
+  "¿La señalización se encuentra visible?",
+  "¿El extintor cuenta con su sello y pasador de seguridad?",
+  "¿El extintor se encuentra libre de obstáculos?"
+];
 
-const ExtinguishersScreen: React.FC = () => {
+interface Props {
+  areas: ExtinguisherArea[];
+  allExtinguishers: Extinguisher[];
+  inspectedIds: Set<string>;
+  refreshData: () => Promise<void>;
+}
+
+const ExtinguishersScreen: React.FC<Props> = ({ areas, allExtinguishers, inspectedIds, refreshData }) => {
   const [newArea, setNewArea] = useState('');
-  const [areas, setAreas] = useState<ExtinguisherArea[]>([]);
-  const [allExtinguishers, setAllExtinguishers] = useState<Extinguisher[]>([]);
-  const [allInspections, setAllInspections] = useState<InspectionRecord[]>([]);
-
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const [isAddingArea, setIsAddingArea] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -52,36 +62,56 @@ const ExtinguishersScreen: React.FC = () => {
   const [inspectingExtinguisher, setInspectingExtinguisher] = useState<Extinguisher | null>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
+  // State for viewing inspection details
+  const [viewingInspectionFor, setViewingInspectionFor] = useState<Extinguisher | null>(null);
+  const [inspectionDetails, setInspectionDetails] = useState<InspectionRecord | null>(null);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
+
+
   const [extinguisherForm, setExtinguisherForm] = useState({
     location: '',
     series: '',
     type: extinguisherTypes[0],
     capacity: extinguisherCapacities[0],
   });
-
-  const fetchData = useCallback(async () => {
-    try {
-      setError(null);
-      setIsLoading(true);
-      const [fetchedAreas, fetchedExtinguishers, fetchedInspections] = await Promise.all([
-        getExtinguisherAreas(),
-        getAllExtinguishers(),
-        getExtinguisherInspections()
-      ]);
-      setAreas(fetchedAreas);
-      setAllExtinguishers(fetchedExtinguishers);
-      setAllInspections(fetchedInspections);
-    } catch (e: any) {
-      setError('No se pudieron cargar los datos. Revisa la consola para más detalles.');
-      console.error(e);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
+  
+  // Reset selected area if it's deleted from the list
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (selectedAreaId && !areas.some(a => a.id === selectedAreaId)) {
+      setSelectedAreaId(null);
+    }
+  }, [areas, selectedAreaId]);
+  
+  // Fetch inspection details when an extinguisher is selected for viewing
+  useEffect(() => {
+    if (!viewingInspectionFor) {
+      setInspectionDetails(null);
+      return;
+    }
+
+    const fetchDetails = async () => {
+      setIsLoadingDetails(true);
+      setDetailsError(null);
+      try {
+        const details = await getInspectionByExtinguisherId(viewingInspectionFor.id);
+        if (details) {
+          setInspectionDetails(details);
+        } else {
+          setDetailsError("No se encontraron los detalles de la inspección.");
+        }
+      } catch (e: any) {
+        setDetailsError(e.message || "Error al cargar los detalles.");
+        console.error(e);
+      } finally {
+        setIsLoadingDetails(false);
+      }
+    };
+
+    fetchDetails();
+  }, [viewingInspectionFor]);
+
 
   const handleAddArea = async () => {
     const trimmedArea = newArea.trim();
@@ -97,7 +127,7 @@ const ExtinguishersScreen: React.FC = () => {
       setError(null);
       await addExtinguisherArea(trimmedArea);
       setNewArea('');
-      await fetchData(); 
+      await refreshData(); 
     } catch (e: any) {
       setError('No se pudo añadir el área. Revisa la consola para más detalles.');
       console.error(e);
@@ -119,10 +149,7 @@ const ExtinguishersScreen: React.FC = () => {
     setDeleteAreaError(null);
     try {
       await deleteExtinguisherArea(areaToDelete.id);
-      if (selectedAreaId === areaToDelete.id) {
-        setSelectedAreaId(null);
-      }
-      await fetchData();
+      await refreshData();
       setAreaToDelete(null);
     } catch (e: any) {
       setDeleteAreaError(e.message || "Ocurrió un error inesperado al eliminar el área.");
@@ -154,7 +181,7 @@ const ExtinguishersScreen: React.FC = () => {
     setError(null);
     try {
         await addExtinguisher({ ...extinguisherForm, area_id: selectedAreaId });
-        await fetchData(); 
+        await refreshData(); 
         setIsRegistering(false);
         setExtinguisherForm({
             location: '',
@@ -182,7 +209,7 @@ const ExtinguishersScreen: React.FC = () => {
     setDeleteError(null);
     try {
         await deleteExtinguisher(extinguisherToDelete.id);
-        await fetchData(); 
+        await refreshData(); 
         setExtinguisherToDelete(null);
     } catch (e: any) {
         setDeleteError(e.message || "Ocurrió un error inesperado durante la eliminación.");
@@ -204,7 +231,7 @@ const ExtinguishersScreen: React.FC = () => {
       await updateExtinguisher(id, detailsToUpdate);
       await addInspection(id, answers);
       
-      await fetchData(); 
+      await refreshData(); 
       setInspectingExtinguisher(null);
 
     } catch (e) {
@@ -217,6 +244,7 @@ const ExtinguishersScreen: React.FC = () => {
     if (isGeneratingReport) return;
     setIsGeneratingReport(true);
     try {
+      const allInspections = await getExtinguisherInspections();
       if (type === 'pdf') {
         await generateExtinguisherReportPdf(areas, allExtinguishers, allInspections);
       } else {
@@ -240,7 +268,7 @@ const ExtinguishersScreen: React.FC = () => {
     setResetError(null);
     try {
       await deleteAllInspections();
-      await fetchData();
+      await refreshData();
       setIsResetConfirming(false);
     } catch (e: any) {
       setResetError(e.message || "Ocurrió un error inesperado durante el reinicio.");
@@ -249,40 +277,32 @@ const ExtinguishersScreen: React.FC = () => {
       setIsResetting(false);
     }
   };
-
+  
+  const selectedArea = areas.find(a => a.id === selectedAreaId);
+  const currentExtinguishers = useMemo(() => 
+    selectedAreaId ? allExtinguishers.filter(e => e.area_id === selectedAreaId) : [],
+    [selectedAreaId, allExtinguishers]
+  );
+  const inspectedExtinguisherIds = inspectedIds;
+  
   const inspectionStats = useMemo(() => {
     const stats: Record<string, { total: number, inspected: number }> = {};
-    const inspectedIds = new Set(allInspections.map(i => i.extinguisher_id));
-
     for (const area of areas) {
         stats[area.id] = { total: 0, inspected: 0 };
     }
-
     for (const ext of allExtinguishers) {
         if (stats[ext.area_id]) {
             stats[ext.area_id].total++;
-            if (inspectedIds.has(ext.id)) {
+            if (inspectedExtinguisherIds.has(ext.id)) {
                 stats[ext.area_id].inspected++;
             }
         }
     }
     return stats;
-  }, [areas, allExtinguishers, allInspections]);
+  }, [areas, allExtinguishers, inspectedExtinguisherIds]);
 
-  const inspectedExtinguisherIds = useMemo(() => 
-    new Set(allInspections.map(i => i.extinguisher_id)), 
-    [allInspections]
-  );
-  
+
   const renderAreaList = () => {
-    if (isLoading) {
-      return (
-        <div className="flex items-center justify-center h-full">
-          <SpinnerIcon className="h-8 w-8 animate-spin text-indigo-400" />
-        </div>
-      );
-    }
-    
     if (areas.length === 0 && !error) {
       return (
         <div className="flex items-center justify-center h-full text-center text-slate-500">
@@ -325,11 +345,6 @@ const ExtinguishersScreen: React.FC = () => {
     );
   };
   
-  const selectedArea = areas.find(a => a.id === selectedAreaId);
-  const currentExtinguishers = useMemo(() => 
-    selectedAreaId ? allExtinguishers.filter(e => e.area_id === selectedAreaId) : [],
-    [selectedAreaId, allExtinguishers]
-  );
 
   if (inspectingExtinguisher) {
     return <InspectionScreen 
@@ -352,7 +367,7 @@ const ExtinguishersScreen: React.FC = () => {
             <div className="w-full sm:w-auto flex flex-col sm:flex-row gap-2">
               <button
                   onClick={handleInitiateReset}
-                  disabled={isResetting || allInspections.length === 0}
+                  disabled={isResetting || inspectedExtinguisherIds.size === 0}
                   className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 transition-colors disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed"
               >
                   {isResetting ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : 'Reiniciar Inspecciones'}
@@ -440,31 +455,31 @@ const ExtinguishersScreen: React.FC = () => {
                     </div>
                   ) : (
                     <div className="space-y-3 mt-4">
-                      {isLoading ? (
-                          <div className="flex items-center justify-center py-8"><SpinnerIcon className="h-8 w-8 animate-spin text-indigo-400" /></div>
-                      ) : currentExtinguishers.length === 0 ? (
+                      {currentExtinguishers.length === 0 ? (
                           <p className="text-slate-500 text-center py-8">No hay extintores registrados en esta área.</p>
                       ) : (
-                          currentExtinguishers.map(ext => (
-                              <div key={ext.id} className="bg-slate-800/50 p-3 rounded-md text-sm flex justify-between items-center">
-                                  <div>
+                        <>
+                          {currentExtinguishers.map(ext => {
+                              const isInspected = inspectedExtinguisherIds.has(ext.id);
+                              const itemContent = (
+                                <>
+                                  <div className="flex items-center gap-3 flex-grow">
+                                    <div>
                                       <p className="font-bold text-white">{ext.location}</p>
                                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-slate-400">
                                           <span>Serie: {ext.series || 'N/A'}</span>
                                           <span>{ext.type} - {ext.capacity}</span>
                                       </div>
+                                    </div>
                                   </div>
                                   <div className="flex items-center gap-2 flex-shrink-0">
-                                      {inspectedExtinguisherIds.has(ext.id) ? (
-                                          <button
-                                              className="rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white shadow-sm cursor-not-allowed"
-                                              disabled
-                                          >
+                                      {isInspected ? (
+                                          <span className="rounded-md bg-green-800/50 text-green-300 px-3 py-1 text-xs font-semibold shadow-sm">
                                               Inspeccionado
-                                          </button>
+                                          </span>
                                       ) : (
                                           <button
-                                            onClick={() => handleInspectExtinguisher(ext)}
+                                            onClick={(e) => { e.stopPropagation(); handleInspectExtinguisher(ext); }}
                                             className="rounded-md bg-sky-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-sky-500 transition-colors"
                                             title="Inspeccionar extintor"
                                           >
@@ -472,16 +487,28 @@ const ExtinguishersScreen: React.FC = () => {
                                           </button>
                                       )}
                                       <button
-                                        onClick={() => handleInitiateDelete(ext)}
+                                        onClick={(e) => { e.stopPropagation(); handleInitiateDelete(ext); }}
                                         disabled={deletingExtinguisherId !== null}
-                                        className="p-1.5 text-red-500 hover:text-red-400 rounded-full hover:bg-slate-700 transition-colors disabled:opacity-50"
-                                        title="Eliminar extintor"
+                                        className="p-1.5 text-slate-500 hover:text-red-400 rounded-full hover:bg-slate-700 transition-colors disabled:opacity-50"
+                                        title="Eliminar extintor (incluye inspección)"
                                       >
                                         <TrashIcon className="h-5 w-5" />
                                       </button>
                                   </div>
-                              </div>
-                          ))
+                                </>
+                              );
+
+                              return isInspected ? (
+                                <button key={ext.id} onClick={() => setViewingInspectionFor(ext)} className="w-full text-left bg-slate-800/50 p-3 rounded-md text-sm flex justify-between items-center gap-2 hover:bg-slate-700/80 transition-colors">
+                                  {itemContent}
+                                </button>
+                              ) : (
+                                <div key={ext.id} className="bg-slate-800/50 p-3 rounded-md text-sm flex justify-between items-center gap-2">
+                                  {itemContent}
+                                </div>
+                              );
+                          })}
+                        </>
                       )}
                     </div>
                   )}
@@ -517,6 +544,82 @@ const ExtinguishersScreen: React.FC = () => {
           </div>
         </div>
       </div>
+      
+      {/* --- Modales --- */}
+
+      {viewingInspectionFor && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setViewingInspectionFor(null)}>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-6 border-b border-slate-800 flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-bold text-white">Detalles de Inspección</h3>
+                <p className="text-sm text-slate-400">
+                  Extintor en: {viewingInspectionFor.location}
+                </p>
+              </div>
+              <button onClick={() => setViewingInspectionFor(null)} className="text-slate-500 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              {isLoadingDetails ? (
+                <div className="flex flex-col items-center justify-center gap-4 py-10">
+                  <SpinnerIcon className="h-10 w-10 text-indigo-500 animate-spin" />
+                  <p className="text-slate-400">Cargando detalles...</p>
+                </div>
+              ) : detailsError ? (
+                 <p className="text-center text-red-400 py-8">{detailsError}</p>
+              ) : inspectionDetails ? (
+                <div className="space-y-4">
+                  {inspectionQuestions.map((q, index) => {
+                      const answerData = inspectionDetails.answers[index];
+                      const answerText = answerData?.answer || 'Sin respuesta';
+                      const answerColor = answerText === 'Sí' ? 'text-green-400' : answerText === 'No' ? 'text-red-400' : 'text-yellow-400';
+                      return (
+                          <div key={index} className="bg-slate-800/50 p-3 rounded-lg text-sm">
+                              <p className="font-medium text-slate-300 mb-2">{`${index + 1}. ${q}`}</p>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                  <div className="col-span-1">
+                                      <p className="text-slate-400">Respuesta:</p>
+                                      <p className={`font-bold ${answerColor}`}>{answerText}</p>
+                                  </div>
+                                  <div className="col-span-2">
+                                      <p className="text-slate-400">Observación:</p>
+                                      <p className="text-white italic">{answerData?.observation || 'Ninguna'}</p>
+                                  </div>
+                              </div>
+                              {answerData?.photo && (
+                                  <div className="mt-3">
+                                      <p className="text-slate-400 mb-1">Evidencia:</p>
+                                      <img 
+                                          src={answerData.photo} 
+                                          alt="Evidencia" 
+                                          className="rounded-md object-cover w-32 h-32 cursor-pointer hover:opacity-80 transition-opacity"
+                                          onClick={() => setViewingImage(answerData.photo as string)}
+                                      />
+                                  </div>
+                              )}
+                          </div>
+                      );
+                  })}
+                </div>
+              ) : null}
+            </div>
+             <div className="p-4 border-t border-slate-800 text-right bg-slate-900/50 rounded-b-xl">
+              <button onClick={() => setViewingInspectionFor(null)} className="rounded-md bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600 transition-colors">
+                  Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {viewingImage && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setViewingImage(null)}>
+            <div className="relative max-w-4xl max-h-[90vh]">
+                <img src={viewingImage} alt="Evidencia en tamaño completo" className="rounded-lg object-contain max-h-[90vh]" />
+                <button onClick={() => setViewingImage(null)} className="absolute -top-3 -right-3 bg-slate-700 rounded-full text-white text-2xl h-8 w-8 flex items-center justify-center leading-none hover:bg-slate-600 transition-colors">&times;</button>
+            </div>
+        </div>
+      )}
 
       {extinguisherToDelete && !deleteError && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">

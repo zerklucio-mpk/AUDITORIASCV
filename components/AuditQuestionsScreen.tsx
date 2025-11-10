@@ -1,10 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { Answers, Answer } from '../types';
 import { useAppContext } from '../context/AppContext';
+import { uploadPhoto } from '../services/supabaseClient';
 import ArrowLeftIcon from './icons/ArrowLeftIcon';
 import CheckCircleIcon from './icons/CheckCircleIcon';
 import CameraIcon from './icons/CameraIcon';
 import XCircleIcon from './icons/XCircleIcon';
+import SpinnerIcon from './icons/SpinnerIcon';
 
 
 interface Props {
@@ -16,6 +18,8 @@ interface Props {
 const AuditQuestionsScreen: React.FC<Props> = ({ initialAnswers, onFinish, onBack }) => {
   const { questions } = useAppContext();
   const [answers, setAnswers] = useState<Answers>(initialAnswers);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState<number | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   
   const questionTexts = useMemo(() => questions.map(q => q.text), [questions]);
 
@@ -23,6 +27,8 @@ const AuditQuestionsScreen: React.FC<Props> = ({ initialAnswers, onFinish, onBac
     setAnswers(prev => {
       const newAnswerData = { ...prev[questionIndex], answer };
       if (answer !== 'No') {
+        // Here you might want to also delete the photo from storage if one exists.
+        // For simplicity, we're just removing the reference.
         delete newAnswerData.photo;
       }
       return {
@@ -39,22 +45,30 @@ const AuditQuestionsScreen: React.FC<Props> = ({ initialAnswers, onFinish, onBac
     }));
   };
 
-  const handlePhotoChange = (questionIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (questionIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
+      setIsUploadingPhoto(questionIndex);
+      setUploadError(null);
+      try {
+          const photoUrl = await uploadPhoto(file);
           setAnswers(prev => ({
               ...prev,
-              [questionIndex]: { ...prev[questionIndex], answer: 'No', photo: reader.result as string },
+              [questionIndex]: { ...prev[questionIndex], answer: 'No', photo: photoUrl },
           }));
-      };
-      reader.readAsDataURL(file);
+      } catch (error) {
+          console.error("Error uploading photo:", error);
+          setUploadError("No se pudo subir la foto. Inténtalo de nuevo.");
+      } finally {
+          setIsUploadingPhoto(null);
+      }
       e.target.value = '';
   };
 
   const handleRemovePhoto = (questionIndex: number) => {
+      // Note: This only removes the reference in the DB.
+      // A more robust solution would also delete the file from Supabase Storage.
       setAnswers(prev => {
           const updatedAnswer = { ...prev[questionIndex] };
           delete updatedAnswer.photo;
@@ -87,6 +101,8 @@ const AuditQuestionsScreen: React.FC<Props> = ({ initialAnswers, onFinish, onBac
         <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">Cuestionario</h2>
       </div>
       
+      {uploadError && <div className="mb-4 text-center text-red-400 bg-red-900/20 p-3 rounded-md">{uploadError}</div>}
+
       <div className="space-y-6">
         {questionTexts.map((question, index) => (
           <div key={index} className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
@@ -114,19 +130,19 @@ const AuditQuestionsScreen: React.FC<Props> = ({ initialAnswers, onFinish, onBac
                     className="block w-full rounded-md border-0 py-2 px-3 bg-slate-800 text-white shadow-sm ring-1 ring-inset ring-slate-700 placeholder:text-slate-500 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm sm:leading-6 transition-colors duration-200 flex-1"
                     rows={1}
                 ></textarea>
-                <label className={`flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 w-full sm:w-auto ${
+                <label className={`relative flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 w-full sm:w-auto ${
                     answers[index]?.answer === 'No'
                     ? 'bg-blue-600 text-white hover:bg-blue-500 cursor-pointer'
                     : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                 }`}>
-                    <CameraIcon className="h-5 w-5" />
+                    {isUploadingPhoto === index ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : <CameraIcon className="h-5 w-5" />}
                     <input
                         type="file"
                         accept="image/*"
                         capture="environment"
                         className="hidden"
                         onChange={(e) => handlePhotoChange(index, e)}
-                        disabled={answers[index]?.answer !== 'No'}
+                        disabled={answers[index]?.answer !== 'No' || isUploadingPhoto !== null}
                     />
                 </label>
             </div>

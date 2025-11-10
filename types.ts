@@ -3,7 +3,7 @@ export type Answer = 'Sí' | 'No' | 'N/A';
 export interface AnswerData {
   answer: Answer | null;
   observation?: string;
-  photo?: string; // base64 string
+  photo?: string; // public URL from Supabase Storage
 }
 
 export interface Answers {
@@ -75,7 +75,7 @@ export type FirstAidKitAnswer = 'Sí' | 'No' | 'N/A';
 export interface FirstAidKitAnswerData {
   answer: FirstAidKitAnswer | null;
   observation?: string;
-  photo?: string;
+  photo?: string; // public URL from Supabase Storage
 }
 
 export interface FirstAidKitAnswers {
@@ -103,7 +103,7 @@ export type InspectionAnswer = 'Sí' | 'No' | 'N/A';
 export interface InspectionAnswerData {
   answer: InspectionAnswer | null;
   observation?: string;
-  photo?: string; // base64 string
+  photo?: string; // public URL from Supabase Storage
 }
 
 export interface InspectionAnswers {
